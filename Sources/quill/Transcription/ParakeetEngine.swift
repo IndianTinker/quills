@@ -2,18 +2,22 @@ import AVFoundation
 import FluidAudio
 import Foundation
 
-/// Parakeet TDT 0.6B v2 (English) via FluidAudio's Core ML port. Models
-/// download once into FluidAudio's managed cache (~600 MB); after that,
-/// transcription runs entirely on-device at roughly 20 seconds per hour of
-/// audio on Apple Silicon.
+/// Parakeet TDT 0.6B v3 (multilingual) via FluidAudio's Core ML port.
+///
+/// VoiceInk and quill share FluidAudio's user-level model cache.  Deliberately
+/// load only from that cache: quill must never start a second model download
+/// or maintain a private copy of the model.
 actor ParakeetEngine: TranscriptionEngine {
     enum EngineError: Error, CustomStringConvertible {
         case notPrepared
+        case sharedModelMissing(URL)
         case unreadableAudio(URL, Error?)
 
         var description: String {
             switch self {
             case .notPrepared: return "parakeet engine used before prepare()"
+            case .sharedModelMissing(let cache):
+                return "shared Parakeet v3 model is not installed at \(cache.path)"
             case .unreadableAudio(let url, let e):
                 return "unreadable or empty audio \(url.lastPathComponent)"
                     + (e.map { ": \($0)" } ?? "")
@@ -22,13 +26,17 @@ actor ParakeetEngine: TranscriptionEngine {
     }
 
     nonisolated let name = "parakeet"
-    nonisolated let model = "parakeet-tdt-0.6b-v2-coreml"
+    nonisolated let model = "parakeet-tdt-0.6b-v3-coreml"
 
     private var manager: AsrManager?
 
     func prepare() async throws {
         guard manager == nil else { return }
-        let models = try await AsrModels.downloadAndLoad(version: .v2)
+        let cache = AsrModels.defaultCacheDirectory(for: .v3)
+        guard AsrModels.modelsExist(at: cache, version: .v3) else {
+            throw EngineError.sharedModelMissing(cache)
+        }
+        let models = try await AsrModels.load(from: cache, version: .v3)
         let manager = AsrManager()
         try await manager.loadModels(models)
         self.manager = manager

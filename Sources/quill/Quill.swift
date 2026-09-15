@@ -153,9 +153,13 @@ final class AppController {
         switch status {
         case .idle:
             menuBar.updateTranscription(nil)
-        case .transcribing(let name, let queued):
+        case .loadingModel(let name, let queued):
             menuBar.updateTranscription(
-                queued > 0 ? "transcribing \(name) · \(queued) queued" : "transcribing \(name)"
+                queued > 0 ? "loading shared Parakeet v3 · \(name) · \(queued) queued" : "loading shared Parakeet v3 · \(name)"
+            )
+        case .transcribing(let name, let track, let queued):
+            menuBar.updateTranscription(
+                queued > 0 ? "transcribing \(track) · \(name) · \(queued) queued" : "transcribing \(track) · \(name)"
             )
         case .failed(let name):
             menuBar.updateTranscription("transcription failed · \(name)")

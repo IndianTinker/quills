@@ -51,12 +51,13 @@ written is still readable.
 
 ## Transcription
 
-Built in, on-device, automatic. The default engine is **Parakeet TDT 0.6B v2**
-(English) via [FluidAudio](https://github.com/FluidInference/FluidAudio)'s
-Core ML port — roughly 20 seconds per hour of audio on Apple Silicon. Models
-(~600 MB) download once on first transcription; `quill doctor` tells you
-whether they're already cached so you're never downloading after an important
-meeting.
+Built in, on-device, automatic. The engine is **Parakeet TDT 0.6B v3**
+(multilingual: 25 European languages plus Japanese) via
+[FluidAudio](https://github.com/FluidInference/FluidAudio)'s Core ML port.
+It loads VoiceInk's existing shared FluidAudio model cache at
+`~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3`; quill
+never downloads or stores a second model copy. Install that model in VoiceInk
+first, then use `quill doctor` to confirm it is available.
 
 Each track is transcribed separately, shifted by its start offset so both
 share one clock, and merged by timestamp. Jobs run in a serial queue — you can
@@ -121,7 +122,7 @@ quill install --uninstall
   per-process picker if it bothers you).
 - If recordings come out silent, check System Settings → Privacy & Security →
   Screen & System Audio Recording.
-- Parakeet v2 is English-only. Other languages will come with the Whisper
-  engine.
+- Quill requires VoiceInk's Parakeet v3 bundle to be installed before its
+  first transcription; it intentionally will not download a model itself.
 - The binary embeds its Info.plist (`__TEXT,__info_plist`) so TCC can
   attribute permissions to quill itself when running as a LaunchAgent.

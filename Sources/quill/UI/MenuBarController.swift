@@ -78,12 +78,20 @@ final class MenuBarController {
         statusItem.button?.contentTintColor = recording ? .systemRed : nil
     }
 
-    /// Show transcription progress/failure as a second status line in the
-    /// menu; nil hides it. Independent of recording state — a new recording
-    /// can run while the last one transcribes.
+    /// Show transcription progress/failure both in the menu and directly in
+    /// the status bar. Independent of recording state — a new recording can
+    /// run while the last one transcribes.
     func updateTranscription(_ text: String?) {
         transcriptionLabel.title = text ?? ""
         transcriptionLabel.isHidden = text == nil
+        statusItem.button?.title = text == nil ? "" : "  \(statusBarTitle(for: text!))"
+        statusItem.button?.toolTip = text
+    }
+
+    private func statusBarTitle(for text: String) -> String {
+        if text.hasPrefix("transcription failed") { return "Transcription failed" }
+        if text.hasPrefix("loading") { return "Loading model…" }
+        return "Transcribing…"
     }
 
     // Inlined Lucide feather SVG. Keeping it in source means the executable

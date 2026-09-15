@@ -10,7 +10,8 @@ import Foundation
 actor TranscriptionCoordinator {
     enum Status: Sendable {
         case idle
-        case transcribing(session: String, queued: Int)
+        case loadingModel(session: String, queued: Int)
+        case transcribing(session: String, track: String, queued: Int)
         case failed(session: String)
     }
 
@@ -74,7 +75,7 @@ actor TranscriptionCoordinator {
     private func drain() async {
         while !queue.isEmpty {
             let dir = queue.removeFirst()
-            publish(.transcribing(session: dir.lastPathComponent, queued: queue.count))
+            publish(.loadingModel(session: dir.lastPathComponent, queued: queue.count))
             do {
                 try await transcribe(dir)
                 notifyUser(title: "quill — transcript ready", body: dir.lastPathComponent)
@@ -103,6 +104,11 @@ actor TranscriptionCoordinator {
 
         var merged: [Transcript.Segment] = []
         for track in meta.tracks {
+            publish(.transcribing(
+                session: dir.lastPathComponent,
+                track: track.file,
+                queued: queue.count
+            ))
             let audio = dir.appendingPathComponent(track.file)
             guard FileManager.default.fileExists(atPath: audio.path) else {
                 log(dir, "skipping missing track \(track.file)")
