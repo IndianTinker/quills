@@ -76,8 +76,8 @@ struct Doctor: ParsableCommand {
 }
 
 /// Download the shared model before a meeting, rather than waiting for the
-/// first finished recording. FluidAudio uses one user-level cache, so this is
-/// also the bundle VoiceInk reuses.
+/// first finished recording. By default FluidAudio uses one user-level cache,
+/// but `transcription.model_dir` can select another compatible directory.
 struct Models: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "models",
@@ -92,7 +92,7 @@ struct Models: AsyncParsableCommand {
             throw ValidationError("use `quill models --download`")
         }
 
-        let cache = AsrModels.defaultCacheDirectory(for: .v3)
+        let cache = Config.transcriptionModelDir()
         if AsrModels.modelsExist(at: cache, version: .v3) {
             print("✓ shared Parakeet v3 model already installed")
             print("  \(cache.path)")

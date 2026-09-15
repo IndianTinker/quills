@@ -4,9 +4,10 @@ import Foundation
 
 /// Parakeet TDT 0.6B v3 (multilingual) via FluidAudio's Core ML port.
 ///
-/// VoiceInk and quill share FluidAudio's user-level model cache. Quill always
-/// uses that cache: it reuses VoiceInk's v3 bundle when present, or downloads
-/// it there once when it is missing. It never maintains a private model copy.
+/// VoiceInk and quill share FluidAudio's user-level model cache by default.
+/// Users may point `transcription.model_dir` at another compatible model
+/// directory (including a symlink). Missing models download to that selected
+/// directory; quill never copies an existing bundle elsewhere.
 actor ParakeetEngine: TranscriptionEngine {
     enum EngineError: Error, CustomStringConvertible {
         case notPrepared
@@ -29,7 +30,7 @@ actor ParakeetEngine: TranscriptionEngine {
 
     func prepare() async throws {
         guard manager == nil else { return }
-        let cache = AsrModels.defaultCacheDirectory(for: .v3)
+        let cache = Config.transcriptionModelDir()
         let models: AsrModels
         if AsrModels.modelsExist(at: cache, version: .v3) {
             models = try await AsrModels.load(from: cache, version: .v3)

@@ -1,10 +1,15 @@
+import FluidAudio
 import Foundation
 
 /// Optional user config at ~/.config/quill/config.json:
 ///
 ///     {
 ///       "recordings_dir": "~/Recordings",
-///       "transcription": { "enabled": true, "engine": "parakeet" },
+///       "transcription": {
+///         "enabled": true,
+///         "engine": "parakeet",
+///         "model_dir": "~/Models/parakeet-tdt-0.6b-v3"
+///       },
 ///       "mic_voice_processing": true,
 ///       "on_stop": "my-hook"
 ///     }
@@ -42,6 +47,19 @@ enum Config {
     /// warns and falls back for anything else.
     static func transcriptionEngine() -> String {
         transcription()?["engine"] as? String ?? "parakeet"
+    }
+
+    /// Directory containing a FluidAudio-compatible Parakeet TDT v3 bundle.
+    /// This may be a symlink to a model installed by another application.
+    /// The default is FluidAudio's user-level shared cache.
+    static func transcriptionModelDir() -> URL {
+        guard let dir = transcription()?["model_dir"] as? String, !dir.isEmpty else {
+            return AsrModels.defaultCacheDirectory(for: .v3)
+        }
+        return URL(
+            fileURLWithPath: (dir as NSString).expandingTildeInPath,
+            isDirectory: true
+        )
     }
 
     private static func transcription() -> [String: Any]? {

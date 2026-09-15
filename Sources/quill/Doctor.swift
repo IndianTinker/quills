@@ -86,7 +86,7 @@ enum DoctorReport {
                 remediation: nil
             )
         }
-        let cache = AsrModels.defaultCacheDirectory(for: .v3)
+        let cache = Config.transcriptionModelDir()
         if AsrModels.modelsExist(at: cache, version: .v3) {
             return Check(name: "transcription", status: .ok, remediation: nil)
         }

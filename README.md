@@ -87,7 +87,11 @@ Optional, at `~/.config/quill/config.json`:
 ```json
 {
   "recordings_dir": "~/Recordings",
-  "transcription": { "enabled": true, "engine": "parakeet" },
+  "transcription": {
+    "enabled": true,
+    "engine": "parakeet",
+    "model_dir": "~/Models/parakeet-tdt-0.6b-v3"
+  },
   "on_stop": "my-hook"
 }
 ```
@@ -95,6 +99,11 @@ Optional, at `~/.config/quill/config.json`:
 - `recordings_dir` — where sessions land. Resolution order: `--out` flag >
   config > `~/Recordings`.
 - `transcription.enabled` — set `false` to just record.
+- `transcription.model_dir` — optional path to a **FluidAudio-compatible
+  Parakeet TDT v3 Core ML bundle**. It can be a folder used by another local
+  transcription app, or a symlink to that folder. When absent, Quill uses the
+  standard FluidAudio shared cache. `quill models --download`, automatic
+  first-use downloads, and `quill doctor` all use this selected path.
 - `mic_voice_processing` — Apple's echo cancellation on the mic (default off).
   Set `true` when recording meetings through the speakers, so playback doesn't
   bleed into the mic track and get transcribed twice as "me". The trade: while
@@ -136,5 +145,9 @@ quill install --uninstall
   Screen & System Audio Recording.
 - The first v3 download is about 600 MB. Run `quill models --download` on a
   reliable connection before recording an important meeting.
+- A model from another app must be the FluidAudio Parakeet v3 Core ML bundle;
+  Whisper, GGUF, or other model formats cannot be loaded by Quill. To avoid
+  duplication, point `transcription.model_dir` directly at it or use a
+  symlink, for example: `ln -s "/path/to/model" ~/Models/parakeet-v3`.
 - The binary embeds its Info.plist (`__TEXT,__info_plist`) so TCC can
   attribute permissions to quill itself when running as a LaunchAgent.
