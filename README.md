@@ -11,10 +11,12 @@ Swift binary, menu-bar tray, no app bundle.
 ## Install
 
 ```sh
-cd quill
+git clone https://github.com/IndianTinker/quills.git
+cd quills
 swift build -c release
-sudo cp .build/release/quill /usr/local/bin/quill
-quill install --launch-at-login   # optional — runs in the background on login
+sudo install -m 755 .build/release/quill /usr/local/bin/quill
+quill models --download           # downloads only if VoiceInk has not already
+quill install --launch-at-login   # optional: start in the menu bar on login
 ```
 
 **Requires:** macOS 15+ (Core Audio process taps for system audio — no
@@ -29,8 +31,8 @@ transcription speed.
    icon turns red with a running elapsed counter, and macOS shows the purple
    recording indicator.
 3. **Click → Stop recording** when the meeting ends. Transcription starts
-   automatically (the menu shows progress); a notification fires when the
-   transcript is ready.
+   automatically. The status bar shows model loading and transcription
+   progress; a notification fires when the transcript is ready.
 
 Each session lands in `~/Recordings/<yyyy.MM.dd-HHmm>/`:
 
@@ -54,10 +56,19 @@ written is still readable.
 Built in, on-device, automatic. The engine is **Parakeet TDT 0.6B v3**
 (multilingual: 25 European languages plus Japanese) via
 [FluidAudio](https://github.com/FluidInference/FluidAudio)'s Core ML port.
-It loads VoiceInk's existing shared FluidAudio model cache at
-`~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3`; quill
-never downloads or stores a second model copy. Install that model in VoiceInk
-first, then use `quill doctor` to confirm it is available.
+It uses FluidAudio's shared user-level cache at
+`~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3`. If
+VoiceInk has already installed v3, Quill reuses it immediately. If it is not
+there, `quill models --download` (or the first transcription while online)
+downloads v3 into that same shared cache. Quill never keeps a second private
+model copy.
+
+Before a meeting, run this once to make model setup explicit:
+
+```sh
+quill models --download
+quill doctor
+```
 
 Each track is transcribed separately, shifted by its start offset so both
 share one clock, and merged by timestamp. Jobs run in a serial queue — you can
@@ -101,6 +112,7 @@ Optional, at `~/.config/quill/config.json`:
 quill                        # run the menu-bar daemon (^C to quit)
 quill run --out <dir>        # custom recordings root (default ~/Recordings)
 quill doctor                 # check permissions, recordings folder, models
+quill models --download      # pre-download/reuse shared multilingual v3 model
 quill install --launch-at-login
 quill install --uninstall
 ```
@@ -122,7 +134,7 @@ quill install --uninstall
   per-process picker if it bothers you).
 - If recordings come out silent, check System Settings → Privacy & Security →
   Screen & System Audio Recording.
-- Quill requires VoiceInk's Parakeet v3 bundle to be installed before its
-  first transcription; it intentionally will not download a model itself.
+- The first v3 download is about 600 MB. Run `quill models --download` on a
+  reliable connection before recording an important meeting.
 - The binary embeds its Info.plist (`__TEXT,__info_plist`) so TCC can
   attribute permissions to quill itself when running as a LaunchAgent.

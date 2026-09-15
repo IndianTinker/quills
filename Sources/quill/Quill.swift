@@ -1,5 +1,6 @@
 import AppKit
 import ArgumentParser
+import FluidAudio
 import Foundation
 
 @main
@@ -7,7 +8,7 @@ struct Quill: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "quill",
         abstract: "Local meeting recorder + transcriber. Records mic and system audio as two tracks, then transcribes on-device.",
-        subcommands: [Run.self, Doctor.self, Install.self],
+        subcommands: [Run.self, Doctor.self, Install.self, Models.self],
         defaultSubcommand: Run.self
     )
 }
@@ -71,6 +72,37 @@ struct Doctor: ParsableCommand {
         if !DoctorReport.allOK(checks) {
             throw ExitCode(1)
         }
+    }
+}
+
+/// Download the shared model before a meeting, rather than waiting for the
+/// first finished recording. FluidAudio uses one user-level cache, so this is
+/// also the bundle VoiceInk reuses.
+struct Models: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "models",
+        abstract: "Manage the shared Parakeet transcription model."
+    )
+
+    @Flag(name: .long, help: "Download the shared multilingual Parakeet v3 model now.")
+    var download = false
+
+    func run() async throws {
+        guard download else {
+            throw ValidationError("use `quill models --download`")
+        }
+
+        let cache = AsrModels.defaultCacheDirectory(for: .v3)
+        if AsrModels.modelsExist(at: cache, version: .v3) {
+            print("✓ shared Parakeet v3 model already installed")
+            print("  \(cache.path)")
+            return
+        }
+
+        print("downloading shared multilingual Parakeet v3 model…")
+        _ = try await AsrModels.download(to: cache, version: .v3)
+        print("✓ shared Parakeet v3 model installed")
+        print("  \(cache.path)")
     }
 }
 

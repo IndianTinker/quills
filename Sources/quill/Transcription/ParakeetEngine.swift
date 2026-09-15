@@ -4,20 +4,17 @@ import Foundation
 
 /// Parakeet TDT 0.6B v3 (multilingual) via FluidAudio's Core ML port.
 ///
-/// VoiceInk and quill share FluidAudio's user-level model cache.  Deliberately
-/// load only from that cache: quill must never start a second model download
-/// or maintain a private copy of the model.
+/// VoiceInk and quill share FluidAudio's user-level model cache. Quill always
+/// uses that cache: it reuses VoiceInk's v3 bundle when present, or downloads
+/// it there once when it is missing. It never maintains a private model copy.
 actor ParakeetEngine: TranscriptionEngine {
     enum EngineError: Error, CustomStringConvertible {
         case notPrepared
-        case sharedModelMissing(URL)
         case unreadableAudio(URL, Error?)
 
         var description: String {
             switch self {
             case .notPrepared: return "parakeet engine used before prepare()"
-            case .sharedModelMissing(let cache):
-                return "shared Parakeet v3 model is not installed at \(cache.path)"
             case .unreadableAudio(let url, let e):
                 return "unreadable or empty audio \(url.lastPathComponent)"
                     + (e.map { ": \($0)" } ?? "")
@@ -33,10 +30,12 @@ actor ParakeetEngine: TranscriptionEngine {
     func prepare() async throws {
         guard manager == nil else { return }
         let cache = AsrModels.defaultCacheDirectory(for: .v3)
-        guard AsrModels.modelsExist(at: cache, version: .v3) else {
-            throw EngineError.sharedModelMissing(cache)
+        let models: AsrModels
+        if AsrModels.modelsExist(at: cache, version: .v3) {
+            models = try await AsrModels.load(from: cache, version: .v3)
+        } else {
+            models = try await AsrModels.downloadAndLoad(to: cache, version: .v3)
         }
-        let models = try await AsrModels.load(from: cache, version: .v3)
         let manager = AsrManager()
         try await manager.loadModels(models)
         self.manager = manager

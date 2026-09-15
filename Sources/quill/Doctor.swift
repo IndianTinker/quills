@@ -93,7 +93,7 @@ enum DoctorReport {
         return Check(
             name: "shared Parakeet v3 model",
             status: .warn("not found at \(cache.path)"),
-            remediation: "install Parakeet v3 in VoiceInk first; quill will not download a separate copy"
+            remediation: "run `quill models --download`, or make a first recording while online"
         )
     }
 
