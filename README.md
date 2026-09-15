@@ -8,6 +8,34 @@ Nothing ever leaves the machine.
 Named for the feather. Sibling of [parrot](https://github.com/digimata/parrot), same skeleton: single
 Swift binary, menu-bar tray, no app bundle.
 
+This repository is a downstream fork of [digimata/quill](https://github.com/digimata/quill),
+which provides the original macOS menu-bar recorder, two-track audio capture,
+local transcription pipeline, and LaunchAgent support. The changes made in
+this fork are documented below so the upstream work and downstream
+contributions remain clearly separated.
+
+## Downstream changes
+
+The following additions were made in this fork:
+
+### 2026-09-15 — downstream fork contributions
+
+- **Shared Parakeet v3 model support** — reuse FluidAudio's shared
+  `parakeet-tdt-0.6b-v3` cache, including models already installed by VoiceInk,
+  instead of maintaining a second private copy.
+- **Model download command** — added `quill models --download` to install the
+  multilingual Parakeet v3 model before an important meeting.
+- **Custom model locations** — added `transcription.model_dir` support so a
+  compatible model can be selected directly or through a symlink.
+- **Improved model diagnostics** — `quill doctor` checks the selected model
+  location, and the menu bar reports model-loading and transcription progress.
+- **Documentation and installation updates** — documented shared-model reuse,
+  first-use setup, custom model paths, and background launch-at-login usage.
+
+These changes are maintained here as downstream contributions on top of the
+upstream project. See the repository history for the individual commits and
+implementation details.
+
 ## Install
 
 ```sh
