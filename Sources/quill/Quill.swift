@@ -173,9 +173,12 @@ final class AppController {
         guard !shuttingDown else { return }
         shuttingDown = true
         stopSession()
-        mcpServer.stop {
-            NSApp.terminate(nil)
-        }
+        // Do not wait for the child termination callback here. A child that
+        // already exited can no longer deliver it, which would leave the menu
+        // bar app unable to quit. The MCP process is asked to stop first and
+        // also detects its parent's disappearance as a fallback.
+        mcpServer.stop()
+        NSApp.terminate(nil)
     }
 
     private func toggle() {
