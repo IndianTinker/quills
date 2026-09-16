@@ -13,7 +13,7 @@ struct Quill: AsyncParsableCommand {
     )
 }
 
-struct Run: ParsableCommand {
+struct Run: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "run",
         abstract: "Run the menu-bar daemon (default)."
@@ -22,10 +22,10 @@ struct Run: ParsableCommand {
     @Option(name: .long, help: "Recordings root directory (overrides the config file).")
     var out: String?
 
-    func run() throws {
-        // ArgumentParser invokes run() on the main thread; promote that fact
-        // to the type system so AppKit calls are cleanly isolated.
-        try MainActor.assumeIsolated { try runMain() }
+    func run() async throws {
+        try await MainActor.run {
+            try runMain()
+        }
     }
 
     @MainActor
@@ -49,7 +49,7 @@ struct Run: ParsableCommand {
         let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
         sigint.setEventHandler {
             FileHandle.standardError.write(Data("\nshutting down\n".utf8))
-            MainActor.assumeIsolated { controller.shutdown() }
+            Task { @MainActor in controller.shutdown() }
         }
         sigint.resume()
         signal(SIGINT, SIG_IGN)
@@ -57,7 +57,7 @@ struct Run: ParsableCommand {
         let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         sigterm.setEventHandler {
             FileHandle.standardError.write(Data("\nshutting down\n".utf8))
-            MainActor.assumeIsolated { controller.shutdown() }
+            Task { @MainActor in controller.shutdown() }
         }
         sigterm.resume()
         signal(SIGTERM, SIG_IGN)
