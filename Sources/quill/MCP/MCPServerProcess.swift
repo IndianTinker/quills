@@ -4,6 +4,7 @@ import Foundation
 /// explicit Quill shutdown always stops the MCP server first.
 @MainActor
 final class MCPServerProcess {
+    let root: URL
     let port: Int
     private var process: Process?
     private var stopping = false
@@ -14,7 +15,8 @@ final class MCPServerProcess {
     }
     var onStateChange: ((MCPServerState) -> Void)?
 
-    init(port: Int) {
+    init(root: URL, port: Int) {
+        self.root = root
         self.port = port
     }
 
@@ -27,7 +29,12 @@ final class MCPServerProcess {
 
         let child = Process()
         child.executableURL = URL(fileURLWithPath: binary)
-        child.arguments = ["mcp", "--port", String(port)]
+        child.arguments = [
+            "mcp",
+            "--port", String(port),
+            "--out", root.path,
+            "--parent-pid", String(ProcessInfo.processInfo.processIdentifier),
+        ]
         child.standardOutput = FileHandle.standardOutput
         child.standardError = FileHandle.standardError
         child.terminationHandler = { [weak self] _ in
@@ -80,15 +87,23 @@ final class MCPServerProcess {
     }
 
     private static func binaryPath() -> String? {
+        if let argv0 = CommandLine.arguments.first {
+            let current: URL
+            if argv0.hasPrefix("/") {
+                current = URL(fileURLWithPath: argv0)
+            } else {
+                current = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                    .appendingPathComponent(argv0)
+            }
+            let resolved = current.standardizedFileURL.resolvingSymlinksInPath()
+            if FileManager.default.isExecutableFile(atPath: resolved.path) {
+                return resolved.path
+            }
+        }
+
         let installed = "/usr/local/bin/quill"
         if FileManager.default.isExecutableFile(atPath: installed) {
             return installed
-        }
-
-        if let argv0 = CommandLine.arguments.first,
-           argv0.hasPrefix("/"),
-           FileManager.default.isExecutableFile(atPath: argv0) {
-            return argv0
         }
         return nil
     }

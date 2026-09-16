@@ -147,13 +147,22 @@ struct QuillMCPStore: Sendable {
             return (text, "application/json")
         }
 
-        guard let id = uri.split(separator: "/").last.map(String.init),
-              uri.hasPrefix("quill://meetings/"),
+        guard let id = transcriptMeetingID(uri: uri),
               let transcript = readTranscript(id: id),
               let data = try? JSONEncoder.pretty.encode(transcript),
               let text = String(data: data, encoding: .utf8)
         else { return nil }
         return (text, "application/json")
+    }
+
+    private func transcriptMeetingID(uri: String) -> String? {
+        let prefix = "quill://meetings/"
+        guard uri.hasPrefix(prefix) else { return nil }
+        let parts = uri.dropFirst(prefix.count).split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2, parts[1] == "transcript", !parts[0].isEmpty else {
+            return nil
+        }
+        return String(parts[0])
     }
 
     private func meeting(at dir: URL) -> Meeting {

@@ -46,26 +46,28 @@ struct Run: AsyncParsableCommand {
 
         let controller = AppController(root: root)
 
-        let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+        signal(SIGINT, SIG_IGN)
+        let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
         sigint.setEventHandler {
             FileHandle.standardError.write(Data("\nshutting down\n".utf8))
             Task { @MainActor in controller.shutdown() }
         }
         sigint.resume()
-        signal(SIGINT, SIG_IGN)
 
-        let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        signal(SIGTERM, SIG_IGN)
+        let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
         sigterm.setEventHandler {
             FileHandle.standardError.write(Data("\nshutting down\n".utf8))
             Task { @MainActor in controller.shutdown() }
         }
         sigterm.resume()
-        signal(SIGTERM, SIG_IGN)
 
         FileHandle.standardError.write(Data(
             "quill up · recordings → \(root.path) · ^C to quit\n".utf8
         ))
-        app.run()
+        withExtendedLifetime((sigint, sigterm)) {
+            app.run()
+        }
     }
 }
 
@@ -121,13 +123,14 @@ final class AppController {
     private let root: URL
     private let menuBar = MenuBarController()
     private let transcription = TranscriptionCoordinator()
-    private let mcpServer = MCPServerProcess(port: Config.mcpPort())
+    private let mcpServer: MCPServerProcess
     private var session: RecordingSession?
     private var ticker: Timer?
     private var shuttingDown = false
 
     init(root: URL) {
         self.root = root
+        mcpServer = MCPServerProcess(root: root, port: Config.mcpPort())
         menuBar.onToggle = { [weak self] in self?.toggle() }
         menuBar.onOpenFolder = { [weak self] in self?.openFolder() }
         menuBar.onMCPStart = { [weak self] in self?.mcpServer.start() }

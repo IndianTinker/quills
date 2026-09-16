@@ -73,8 +73,9 @@ quill install --launch-at-login
 The last command starts Quill and its MCP server in the menu bar. The Terminal
 window can then be closed; the LaunchAgent keeps Quill running at login. The
 feather menu shows MCP status and provides Start, Stop, and Restart controls.
-Quill handles normal LaunchAgent termination gracefully and closes its MCP
-child before exiting.
+Quill stops its MCP child before a normal exit. If the menu-bar parent is
+terminated unexpectedly, the child detects that its parent disappeared and
+closes its loopback server as well.
 
 **Requires:** macOS 15+ (Core Audio process taps for system audio — no
 virtual device, no kernel extension). Apple Silicon recommended for
@@ -179,7 +180,7 @@ quill                        # run the menu-bar daemon (^C to quit)
 quill run --out <dir>        # custom recordings root (default ~/Recordings)
 quill doctor                 # check permissions, recordings folder, models
 quill models --download      # pre-download/reuse shared multilingual v3 model
-quill mcp                    # run the local read-only MCP server directly
+quill mcp --out <dir>        # run the local read-only MCP server directly
 quill install --launch-at-login
 quill install --uninstall
 ```

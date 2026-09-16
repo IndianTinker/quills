@@ -3,6 +3,7 @@ import MCP
 import NIOCore
 import NIOHTTP1
 import NIOPosix
+import Darwin
 
 /// Read-only MCP server for local Quill data. The HTTP multiplexer creates a
 /// separate MCP Server/transport pair for every MCP session, allowing multiple
@@ -11,7 +12,7 @@ struct QuillMCPServer {
     let root: URL
     let port: Int
 
-    func run() async throws {
+    func run(parentPID: Int32? = nil) async throws {
         let router = MCPHTTPRouter(store: QuillMCPStore(root: root), port: port)
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let bootstrap = ServerBootstrap(group: group)
@@ -27,6 +28,20 @@ struct QuillMCPServer {
         FileHandle.standardError.write(Data(
             "quill MCP up · http://127.0.0.1:\(port)/mcp · read-only\n".utf8
         ))
+
+        let parentMonitor = parentPID.map { parentPID in
+            Task { [channel] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    guard getppid() != parentPID else { continue }
+                    channel.eventLoop.execute {
+                        channel.close(promise: nil)
+                    }
+                    return
+                }
+            }
+        }
+        defer { parentMonitor?.cancel() }
 
         do {
             try await channel.closeFuture.get()
@@ -44,9 +59,17 @@ struct QuillMCPServer {
 /// Owns the per-client stateful MCP sessions. StatefulHTTPServerTransport is
 /// deliberately scoped to one session; this actor is the multi-client layer.
 private actor MCPHTTPRouter {
+    private struct SessionEntry {
+        let session: MCPClientSession
+        var lastAccess: Date
+    }
+
+    private static let maxSessions = 64
+    private static let sessionIdleTimeout: TimeInterval = 2 * 60 * 60
+
     private let store: QuillMCPStore
     private let port: Int
-    private var sessions: [String: MCPClientSession] = [:]
+    private var sessions: [String: SessionEntry] = [:]
 
     init(store: QuillMCPStore, port: Int) {
         self.store = store
@@ -54,18 +77,22 @@ private actor MCPHTTPRouter {
     }
 
     func handle(_ request: HTTPRequest) async -> HTTPResponse {
+        await removeExpiredSessions()
+
         guard request.path == nil || request.path == "/mcp" else {
             return .error(statusCode: 404, .invalidRequest("Not Found"))
         }
 
         if let sessionID = request.header(HTTPHeaderName.sessionID) {
-            guard let session = sessions[sessionID] else {
+            guard var entry = sessions[sessionID] else {
                 return .error(statusCode: 404, .invalidRequest("Unknown MCP session"))
             }
-            let response = await session.handle(request)
+            entry.lastAccess = Date()
+            sessions[sessionID] = entry
+            let response = await entry.session.handle(request)
             if request.method.uppercased() == "DELETE" {
                 sessions.removeValue(forKey: sessionID)
-                await session.stop()
+                await entry.session.stop()
             }
             return response
         }
@@ -75,13 +102,14 @@ private actor MCPHTTPRouter {
         }
 
         do {
+            await evictOldestSessionIfNeeded()
             let session = try await MCPClientSession(store: store, port: port)
             let response = await session.handle(request)
             guard let sessionID = response.headers[HTTPHeaderName.sessionID] else {
                 await session.stop()
                 return .error(statusCode: 500, .internalError("MCP session was not initialized"))
             }
-            sessions[sessionID] = session
+            sessions[sessionID] = SessionEntry(session: session, lastAccess: Date())
             return response
         } catch {
             return .error(statusCode: 500, .internalError(error.localizedDescription))
@@ -89,11 +117,30 @@ private actor MCPHTTPRouter {
     }
 
     func shutdown() async {
-        let active = sessions.values
+        let active = sessions.values.map(\.session)
         sessions.removeAll()
         for session in active {
             await session.stop()
         }
+    }
+
+    private func removeExpiredSessions() async {
+        let cutoff = Date().addingTimeInterval(-Self.sessionIdleTimeout)
+        let expiredIDs = sessions.compactMap { id, entry in
+            entry.lastAccess < cutoff ? id : nil
+        }
+        let expired = expiredIDs.compactMap { sessions.removeValue(forKey: $0)?.session }
+        for session in expired {
+            await session.stop()
+        }
+    }
+
+    private func evictOldestSessionIfNeeded() async {
+        guard sessions.count >= Self.maxSessions,
+              let oldest = sessions.min(by: { $0.value.lastAccess < $1.value.lastAccess })
+        else { return }
+        sessions.removeValue(forKey: oldest.key)
+        await oldest.value.session.stop()
     }
 
     private func isInitialize(_ body: Data?) -> Bool {
@@ -289,6 +336,9 @@ private final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     private let router: MCPHTTPRouter
     private var head: HTTPRequestHead?
     private var body = ByteBuffer()
+    private var bodyTooLarge = false
+
+    private static let maxBodyBytes = 1_048_576
 
     init(router: MCPHTTPRouter) {
         self.router = router
@@ -299,26 +349,54 @@ private final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         case .head(let requestHead):
             head = requestHead
             body.clear()
+            bodyTooLarge = false
         case .body(var buffer):
+            guard !bodyTooLarge else { return }
+            guard buffer.readableBytes <= Self.maxBodyBytes - body.readableBytes else {
+                body.clear()
+                bodyTooLarge = true
+                return
+            }
             body.writeBuffer(&buffer)
         case .end:
             guard let head else { return }
+            let isBodyTooLarge = bodyTooLarge
+            let bodyData = isBodyTooLarge ? nil : body.readBytes(length: body.readableBytes).map { Data($0) }
             let request = HTTPRequest(
                 method: head.method.rawValue,
-                headers: Dictionary(uniqueKeysWithValues: head.headers.map { ($0.name, $0.value) }),
-                body: body.readBytes(length: body.readableBytes).map { Data($0) },
+                headers: Self.mergedHeaders(head.headers),
+                body: bodyData,
                 path: head.uri.split(separator: "?", maxSplits: 1).first.map(String.init)
             )
             self.head = nil
             self.body.clear()
+            self.bodyTooLarge = false
 
             let router = self.router
             let writer = MCPHTTPResponseWriter(context: context)
             Task {
-                let response = await router.handle(request)
+                let response: HTTPResponse
+                if isBodyTooLarge {
+                    response = .error(statusCode: 413, .invalidRequest("Request body exceeds 1 MiB"))
+                } else {
+                    response = await router.handle(request)
+                }
                 await writer.write(response)
             }
         }
+    }
+
+    private static func mergedHeaders(_ headers: HTTPHeaders) -> [String: String] {
+        var merged: [String: String] = [:]
+        for header in headers {
+            let name = header.name.lowercased()
+            if let existing = merged[name] {
+                merged[name] = "\(existing), \(header.value)"
+            } else {
+                merged[name] = header.value
+            }
+        }
+        return merged
     }
 }
 
