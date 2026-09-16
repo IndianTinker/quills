@@ -6,6 +6,7 @@ import MCP
 /// write operations.
 struct QuillMCPStore: Sendable {
     let root: URL
+    private static let failureMarkerName = ".quill-transcription-failed"
 
     struct Meeting: Codable, Sendable {
         let id: String
@@ -86,7 +87,10 @@ struct QuillMCPStore: Sendable {
         )) ?? []
 
         return urls
-            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+            .filter {
+                (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+                    && fm.fileExists(atPath: $0.appendingPathComponent("meta.json").path)
+            }
             .sorted { $0.lastPathComponent > $1.lastPathComponent }
             .prefix(max(0, limit))
             .map { meeting(at: $0) }
@@ -168,6 +172,7 @@ struct QuillMCPStore: Sendable {
     private func meeting(at dir: URL) -> Meeting {
         let metaURL = dir.appendingPathComponent("meta.json")
         let transcriptURL = dir.appendingPathComponent("transcript.json")
+        let failureURL = dir.appendingPathComponent(Self.failureMarkerName)
         let meta = (try? Data(contentsOf: metaURL)).flatMap {
             try? JSONDecoder().decode(SessionMeta.self, from: $0)
         }
@@ -176,6 +181,8 @@ struct QuillMCPStore: Sendable {
         let status: String
         if hasTranscript {
             status = "completed"
+        } else if FileManager.default.fileExists(atPath: failureURL.path) {
+            status = "failed"
         } else if let log = try? String(
             contentsOf: dir.appendingPathComponent("transcribe.log"),
             encoding: .utf8

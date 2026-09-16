@@ -34,10 +34,13 @@ final class SystemAudioRecorder {
     private var procID: AudioDeviceIOProcID?
     private var file: AVAudioFile?
     private let queue = DispatchQueue(label: "com.digimata.quill.system-tap")
-    private(set) var isRecording = false
+    private let stateLock = NSLock()
+    private var recording = false
+    private var firstBufferAtStorage: Date?
+    private var isRecording: Bool { withState { recording } }
     /// Wall-clock time of the first captured buffer — the track's true start,
     /// used to offset-align the two tracks' transcript timestamps.
-    private(set) var firstBufferAt: Date?
+    var firstBufferAt: Date? { withState { firstBufferAtStorage } }
 
     /// Start capturing system audio, encoding AAC into `url` (use a .caf
     /// extension — CAF needs no finalization pass, so a crash mid-meeting
@@ -58,20 +61,21 @@ final class SystemAudioRecorder {
         do {
             let format = try tapStreamFormat()
             try createAggregateDevice(tapUUID: description.uuid)
-            file = try makeFile(url: url, format: format)
+            let newFile = try makeFile(url: url, format: format)
+            withState { file = newFile }
             try installIOProc(format: format)
         } catch {
             cleanup()
             throw error
         }
 
-        isRecording = true
+        withState { recording = true }
     }
 
     /// Stop capturing and finalize the file. Idempotent.
     func stop() {
         guard isRecording else { return }
-        isRecording = false
+        withState { recording = false }
         if let procID, aggregateID != kAudioObjectUnknown {
             AudioDeviceStop(aggregateID, procID)
         }
@@ -137,8 +141,7 @@ final class SystemAudioRecorder {
     private func installIOProc(format: AVAudioFormat) throws {
         var status = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, queue) {
             [weak self] _, inInputData, _, _, _ in
-            guard let self, let file = self.file else { return }
-            if self.firstBufferAt == nil { self.firstBufferAt = Date() }
+            guard let self, let file = self.activeFile() else { return }
             guard let buffer = AVAudioPCMBuffer(
                 pcmFormat: format,
                 bufferListNoCopy: inInputData,
@@ -169,6 +172,20 @@ final class SystemAudioRecorder {
             AudioHardwareDestroyProcessTap(tapID)
             tapID = AudioObjectID(kAudioObjectUnknown)
         }
-        file = nil
+        withState { file = nil }
+    }
+
+    private func activeFile() -> AVAudioFile? {
+        withState {
+            guard recording, let file else { return nil }
+            if firstBufferAtStorage == nil { firstBufferAtStorage = Date() }
+            return file
+        }
+    }
+
+    private func withState<T>(_ body: () -> T) -> T {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return body()
     }
 }

@@ -9,6 +9,7 @@ import Foundation
 /// and never block later jobs.
 actor TranscriptionCoordinator {
     private static let hookMarkerName = ".quill-on-stop-fired"
+    private static let failureMarkerName = ".quill-transcription-failed"
 
     enum Status: Sendable {
         case idle
@@ -67,6 +68,7 @@ actor TranscriptionCoordinator {
         let pending = sessions
             .filter {
                 !FileManager.default.fileExists(atPath: $0.appendingPathComponent("transcript.json").path)
+                    && !transcriptionFailed(for: $0)
             }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         for dir in pending where !queue.contains(dir) {
@@ -99,6 +101,7 @@ actor TranscriptionCoordinator {
                 runHook(for: dir)
             } catch {
                 log(dir, "transcription failed: \(error)")
+                markTranscriptionFailed(for: dir, error: error)
                 lastFailure = dir.lastPathComponent
                 notifyUser(
                     title: "quill — transcription failed",
@@ -213,6 +216,19 @@ actor TranscriptionCoordinator {
 
     private func markHookFired(for dir: URL) {
         FileManager.default.createFile(atPath: hookMarkerURL(for: dir).path, contents: Data())
+    }
+
+    private func transcriptionFailed(for dir: URL) -> Bool {
+        FileManager.default.fileExists(atPath: failureMarkerURL(for: dir).path)
+    }
+
+    private func markTranscriptionFailed(for dir: URL, error: Error) {
+        let message = "\(ISO8601DateFormatter().string(from: Date())) \(error)\n"
+        try? Data(message.utf8).write(to: failureMarkerURL(for: dir), options: .atomic)
+    }
+
+    private func failureMarkerURL(for dir: URL) -> URL {
+        dir.appendingPathComponent(Self.failureMarkerName)
     }
 
     private func log(_ dir: URL, _ message: String) {

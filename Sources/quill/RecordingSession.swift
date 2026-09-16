@@ -53,8 +53,10 @@ final class RecordingSession {
         try? FileManager.default.removeItem(at: dir)
     }
 
-    /// Stop both tracks and write meta.json.
-    func stop() {
+    /// Stop both tracks and atomically publish the session metadata. A caller
+    /// can surface a finalization failure instead of silently creating a
+    /// session that looks queued but has unreadable metadata.
+    func stop() throws {
         mic.stop()
         system.stop()
 
@@ -77,11 +79,10 @@ final class RecordingSession {
                 "system": Int(systemStart.timeIntervalSince(earliest) * 1000),
             ],
         ]
-        if let data = try? JSONSerialization.data(
+        let data = try JSONSerialization.data(
             withJSONObject: meta,
             options: [.prettyPrinted, .sortedKeys]
-        ) {
-            try? data.write(to: dir.appendingPathComponent("meta.json"))
-        }
+        )
+        try data.write(to: dir.appendingPathComponent("meta.json"), options: .atomic)
     }
 }

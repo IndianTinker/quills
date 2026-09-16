@@ -48,4 +48,29 @@ final class SessionAndMCPStoreTests: XCTestCase {
             mcpPort: 47777
         ))
     }
+
+    func testMCPStoreExcludesUnfinalizedAndUnrelatedDirectories() throws {
+        let store = QuillMCPStore(root: root)
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("active-recording", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        let meeting = root.appendingPathComponent("2026.09.16-1300", isDirectory: true)
+        try FileManager.default.createDirectory(at: meeting, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: meeting.appendingPathComponent("meta.json"))
+
+        XCTAssertEqual(store.listMeetings().map(\.id), ["2026.09.16-1300"])
+    }
+
+    func testMCPStoreReportsPersistedTranscriptionFailure() throws {
+        let store = QuillMCPStore(root: root)
+        let meeting = root.appendingPathComponent("2026.09.16-1400", isDirectory: true)
+        try FileManager.default.createDirectory(at: meeting, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: meeting.appendingPathComponent("meta.json"))
+        try Data("no usable tracks\n".utf8).write(
+            to: meeting.appendingPathComponent(".quill-transcription-failed")
+        )
+
+        XCTAssertEqual(store.listMeetings().first?.status, "failed")
+    }
 }

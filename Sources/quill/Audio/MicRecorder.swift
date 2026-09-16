@@ -30,10 +30,13 @@ final class MicRecorder: @unchecked Sendable {
     private var engine = AVAudioEngine()
     private var file: AVAudioFile?
     private var url: URL?
-    private(set) var isRecording = false
+    private let stateLock = NSLock()
+    private var recording = false
+    private var firstBufferAtStorage: Date?
+    private var isRecording: Bool { withState { recording } }
     /// Wall-clock time of the first captured buffer — the track's true start,
     /// used to offset-align the two tracks' transcript timestamps.
-    private(set) var firstBufferAt: Date?
+    var firstBufferAt: Date? { withState { firstBufferAtStorage } }
 
     // Liveness check state (voice-processing path only). Written from the tap
     // callback, read on main when deciding to fall back.
@@ -47,16 +50,16 @@ final class MicRecorder: @unchecked Sendable {
         guard !isRecording else { return }
         self.url = url
         try attach(voiceProcessing: Config.micVoiceProcessing())
-        isRecording = true
+        withState { recording = true }
     }
 
     /// Stop capturing and finalize the file. Idempotent.
     func stop() {
         guard isRecording else { return }
-        isRecording = false
+        withState { recording = false }
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
-        file = nil
+        withState { file = nil }
     }
 
     // MARK: -
@@ -106,12 +109,13 @@ final class MicRecorder: @unchecked Sendable {
             AVNumberOfChannelsKey: 1,
         ]
         do {
-            file = try AVAudioFile(
+            let newFile = try AVAudioFile(
                 forWriting: url!,
                 settings: settings,
                 commonFormat: monoFormat.commonFormat,
                 interleaved: monoFormat.isInterleaved
             )
+            withState { file = newFile }
         } catch {
             throw RecorderError.fileCreationFailed(error)
         }
@@ -135,7 +139,7 @@ final class MicRecorder: @unchecked Sendable {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
-            file = nil
+            withState { file = nil }
             throw RecorderError.engineStartFailed(error)
         }
 
@@ -152,8 +156,7 @@ final class MicRecorder: @unchecked Sendable {
     private func installVoiceTap(on input: AVAudioInputNode, format: AVAudioFormat) {
         let checkFrames = Int(format.sampleRate)
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
-            guard let self, let file = self.file else { return }
-            if self.firstBufferAt == nil { self.firstBufferAt = Date() }
+            guard let self, let file = self.activeFile() else { return }
 
             if !self.livenessSettled {
                 let frames = Int(buffer.frameLength)
@@ -191,8 +194,7 @@ final class MicRecorder: @unchecked Sendable {
             throw RecorderError.formatUnsupported(inputFormat)
         }
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-            guard let self, let file = self.file else { return }
-            if self.firstBufferAt == nil { self.firstBufferAt = Date() }
+            guard let self, let file = self.activeFile() else { return }
             guard let mono = AVAudioPCMBuffer(
                 pcmFormat: monoFormat,
                 frameCapacity: buffer.frameCapacity
@@ -216,8 +218,10 @@ final class MicRecorder: @unchecked Sendable {
         ))
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
-        file = nil
-        firstBufferAt = nil
+        withState {
+            file = nil
+            firstBufferAtStorage = nil
+        }
         if let url {
             try? FileManager.default.removeItem(at: url)
         }
@@ -227,7 +231,24 @@ final class MicRecorder: @unchecked Sendable {
             FileHandle.standardError.write(Data(
                 "mic raw fallback failed: \(error) — session continues without mic track\n".utf8
             ))
-            file = nil
+            withState { file = nil }
         }
+    }
+
+    /// The tap runs on Core Audio's thread while start/stop run on the main
+    /// thread. Copy a strong file reference under a short lock, then perform
+    /// the potentially slow file write after releasing it.
+    private func activeFile() -> AVAudioFile? {
+        withState {
+            guard recording, let file else { return nil }
+            if firstBufferAtStorage == nil { firstBufferAtStorage = Date() }
+            return file
+        }
+    }
+
+    private func withState<T>(_ body: () -> T) -> T {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return body()
     }
 }

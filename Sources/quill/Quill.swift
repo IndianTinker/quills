@@ -219,7 +219,15 @@ final class AppController {
 
     private func stopSession() {
         guard let session else { return }
-        session.stop()
+        let finalizationError: Error?
+        do {
+            try session.stop()
+            finalizationError = nil
+        } catch {
+            finalizationError = error
+            FileHandle.standardError.write(Data("recording finalization failed: \(error)\n".utf8))
+            notifyUser(title: "quill — recording finalization failed", body: "See the Quill log")
+        }
         let elapsed = Self.format(Date().timeIntervalSince(session.startedAt))
         FileHandle.standardError.write(Data(
             "○ stopped · \(elapsed) · \(session.dir.path)\n".utf8
@@ -230,6 +238,15 @@ final class AppController {
         menuBar.update(recording: false, elapsed: nil)
 
         let dir = session.dir
+        if let finalizationError {
+            QuillMCPStatus.write(
+                recording: false,
+                transcriptionState: "failed",
+                transcriptionSession: dir.lastPathComponent,
+                error: "couldn't write meta.json: \(finalizationError)"
+            )
+            return
+        }
         if Config.transcriptionEnabled() {
             QuillMCPStatus.write(
                 recording: false,
