@@ -12,7 +12,7 @@ struct QuillMCPServer {
     let port: Int
 
     func run() async throws {
-        let router = MCPHTTPRouter(store: QuillMCPStore(root: root))
+        let router = MCPHTTPRouter(store: QuillMCPStore(root: root), port: port)
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 128)
@@ -45,10 +45,12 @@ struct QuillMCPServer {
 /// deliberately scoped to one session; this actor is the multi-client layer.
 private actor MCPHTTPRouter {
     private let store: QuillMCPStore
+    private let port: Int
     private var sessions: [String: MCPClientSession] = [:]
 
-    init(store: QuillMCPStore) {
+    init(store: QuillMCPStore, port: Int) {
         self.store = store
+        self.port = port
     }
 
     func handle(_ request: HTTPRequest) async -> HTTPResponse {
@@ -73,7 +75,7 @@ private actor MCPHTTPRouter {
         }
 
         do {
-            let session = try await MCPClientSession(store: store)
+            let session = try await MCPClientSession(store: store, port: port)
             let response = await session.handle(request)
             guard let sessionID = response.headers[HTTPHeaderName.sessionID] else {
                 await session.stop()
@@ -105,8 +107,10 @@ private actor MCPHTTPRouter {
 private actor MCPClientSession {
     private let server: Server
     private let transport: StatefulHTTPServerTransport
+    private let port: Int
 
-    init(store: QuillMCPStore) async throws {
+    init(store: QuillMCPStore, port: Int) async throws {
+        self.port = port
         transport = StatefulHTTPServerTransport()
         server = Server(
             name: "Quill",
@@ -122,7 +126,7 @@ private actor MCPClientSession {
             ListTools.Result(tools: tools)
         }
         await server.withMethodHandler(CallTool.self) { params in
-            try await Self.call(params, store: store)
+            try await Self.call(params, store: store, port: port)
         }
         await server.withMethodHandler(ListResources.self) { _ in
             ListResources.Result(resources: [
@@ -130,7 +134,7 @@ private actor MCPClientSession {
                     name: "quill-status",
                     uri: "quill://status",
                     title: "Quill status",
-                    description: "Current local recording and transcription status.",
+                    description: "Current local Quill and MCP server status.",
                     mimeType: "application/json"
                 )
             ])
@@ -147,7 +151,7 @@ private actor MCPClientSession {
             ])
         }
         await server.withMethodHandler(ReadResource.self) { params in
-            guard let resource = store.resourceText(uri: params.uri) else {
+            guard let resource = store.resourceText(uri: params.uri, mcpPort: port) else {
                 throw MCPError.invalidParams("Unknown or unavailable resource")
             }
             return ReadResource.Result(contents: [
@@ -177,7 +181,7 @@ private actor MCPClientSession {
         Tool(
             name: "get_status",
             title: "Get Quill status",
-            description: "Read the current local recording and transcription status.",
+            description: "Read local Quill recording/transcription status and this MCP server's loopback endpoint.",
             inputSchema: .object(["type": .string("object")]),
             annotations: readOnlyAnnotations
         ),
@@ -236,12 +240,13 @@ private actor MCPClientSession {
 
     private static func call(
         _ params: CallTool.Parameters,
-        store: QuillMCPStore
+        store: QuillMCPStore,
+        port: Int
     ) async throws -> CallTool.Result {
         let output: String
         switch params.name {
         case "get_status":
-            output = try encode(store.readStatus())
+            output = try encode(store.statusSnapshot(mcpPort: port))
         case "list_meetings":
             let limit = boundedInt(params.arguments?["limit"]?.intValue, default: 50)
             output = try encode(store.listMeetings(limit: limit))

@@ -202,6 +202,10 @@ other write operation. The endpoint uses independent MCP sessions, so Claude
 Code, Codex, OpenCode, and other clients can connect concurrently to the same
 running Quill instance.
 
+The `get_status` tool and `quill://status` resource include both Quill runtime
+state and MCP connection details: state, loopback host, port, full endpoint,
+transport, and read-only mode.
+
 Use the feather menu-bar icon to see whether MCP is running and to **Start**,
 **Stop**, or **Restart** it. Choosing **Quit quill** stops the MCP child
 process before Quill exits. With `quill install --launch-at-login`, the menu

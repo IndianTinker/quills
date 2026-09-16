@@ -49,6 +49,34 @@ struct QuillMCPStore: Sendable {
         let error: String?
     }
 
+    struct MCPStatus: Codable, Sendable {
+        let state: String
+        let host: String
+        let port: Int
+        let endpoint: String
+        let transport: String
+        let read_only: Bool
+    }
+
+    struct StatusSnapshot: Codable, Sendable {
+        let mcp: MCPStatus
+        let quill: RuntimeStatus
+    }
+
+    func statusSnapshot(mcpPort: Int) -> StatusSnapshot {
+        StatusSnapshot(
+            mcp: MCPStatus(
+                state: "running",
+                host: "127.0.0.1",
+                port: mcpPort,
+                endpoint: "http://127.0.0.1:\(mcpPort)/mcp",
+                transport: "streamable-http",
+                read_only: true
+            ),
+            quill: readStatus()
+        )
+    }
+
     func listMeetings(limit: Int = 50) -> [Meeting] {
         let fm = FileManager.default
         let urls = (try? fm.contentsOfDirectory(
@@ -111,9 +139,9 @@ struct QuillMCPStore: Sendable {
         return status
     }
 
-    func resourceText(uri: String) -> (text: String, mimeType: String)? {
+    func resourceText(uri: String, mcpPort: Int) -> (text: String, mimeType: String)? {
         if uri == "quill://status" {
-            guard let data = try? JSONEncoder.pretty.encode(readStatus()),
+            guard let data = try? JSONEncoder.pretty.encode(statusSnapshot(mcpPort: mcpPort)),
                   let text = String(data: data, encoding: .utf8)
             else { return nil }
             return (text, "application/json")

@@ -133,7 +133,7 @@ final class MenuBarController {
             mcpStopItem.isEnabled = true
             mcpRestartItem.isEnabled = false
         case .running:
-            mcpStateLabel.title = "MCP server: running · 127.0.0.1:\(port)"
+            mcpStateLabel.title = "MCP server: running · http://127.0.0.1:\(port)/mcp"
             mcpStartItem.isEnabled = false
             mcpStopItem.isEnabled = true
             mcpRestartItem.isEnabled = true
