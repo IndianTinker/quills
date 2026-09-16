@@ -21,7 +21,10 @@ final class MCPServerProcess {
     }
 
     func start() {
-        guard process == nil else { return }
+        if let process, process.isRunning {
+            return
+        }
+        process = nil
         guard let binary = Self.binaryPath() else {
             state = .failed("binary not found")
             return
@@ -37,9 +40,10 @@ final class MCPServerProcess {
         ]
         child.standardOutput = FileHandle.standardOutput
         child.standardError = FileHandle.standardError
+        let childID = ObjectIdentifier(child)
         child.terminationHandler = { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.childDidExit()
+                self?.childDidExit(id: childID)
             }
         }
 
@@ -50,12 +54,20 @@ final class MCPServerProcess {
             process = child
             state = .running
         } catch {
+            process = nil
             state = .failed(error.localizedDescription)
         }
     }
 
     func stop(completion: (() -> Void)? = nil) {
         guard let process else {
+            state = .stopped
+            completion?()
+            return
+        }
+
+        guard process.isRunning else {
+            self.process = nil
             state = .stopped
             completion?()
             return
@@ -72,7 +84,8 @@ final class MCPServerProcess {
         }
     }
 
-    private func childDidExit() {
+    private func childDidExit(id: ObjectIdentifier) {
+        guard process.map(ObjectIdentifier.init) == id else { return }
         process = nil
         let completion = stopCompletion
         stopCompletion = nil
