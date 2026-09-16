@@ -44,6 +44,15 @@ final class RecordingSession {
         }
     }
 
+    /// Remove a session that never successfully began recording. The folder is
+    /// created before macOS permission/device checks, so keeping it would make
+    /// a failed start look like a queued meeting to the local MCP reader.
+    func discard() {
+        mic.stop()
+        system.stop()
+        try? FileManager.default.removeItem(at: dir)
+    }
+
     /// Stop both tracks and write meta.json.
     func stop() {
         mic.stop()

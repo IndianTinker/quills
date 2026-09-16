@@ -337,6 +337,9 @@ private final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     private var head: HTTPRequestHead?
     private var body = ByteBuffer()
     private var bodyTooLarge = false
+    /// HTTP/1.1 permits a client to pipeline requests. Router work is async,
+    /// so preserve request order when writing their responses on this channel.
+    private var responseTail: Task<Void, Never>?
 
     private static let maxBodyBytes = 1_048_576
 
@@ -374,7 +377,9 @@ private final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
 
             let router = self.router
             let writer = MCPHTTPResponseWriter(context: context)
-            Task {
+            let previousResponse = responseTail
+            responseTail = Task {
+                await previousResponse?.value
                 let response: HTTPResponse
                 if isBodyTooLarge {
                     response = .error(statusCode: 413, .invalidRequest("Request body exceeds 1 MiB"))

@@ -8,6 +8,8 @@ import Foundation
 /// just retries on next run. Failures append to the session's transcribe.log
 /// and never block later jobs.
 actor TranscriptionCoordinator {
+    private static let hookMarkerName = ".quill-on-stop-fired"
+
     enum Status: Sendable {
         case idle
         case loadingModel(session: String, queued: Int)
@@ -40,16 +42,31 @@ actor TranscriptionCoordinator {
     /// but were never transcribed. Folder names sort chronologically, so
     /// oldest-first is a name sort.
     func resumePending(root: URL) {
-        guard Config.transcriptionEnabled() else { return }
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: root, includingPropertiesForKeys: nil
         ) else { return }
 
-        let fm = FileManager.default
-        let pending = entries
+        let sessions = entries.filter {
+            FileManager.default.fileExists(atPath: $0.appendingPathComponent("meta.json").path)
+        }
+        let completedWithoutHook = sessions.filter {
+            FileManager.default.fileExists(atPath: $0.appendingPathComponent("transcript.json").path)
+                && !hookWasFired(for: $0)
+        }
+        for dir in completedWithoutHook {
+            runHook(for: dir)
+        }
+
+        guard Config.transcriptionEnabled() else {
+            for dir in sessions where !hookWasFired(for: dir) {
+                runHook(for: dir)
+            }
+            return
+        }
+
+        let pending = sessions
             .filter {
-                fm.fileExists(atPath: $0.appendingPathComponent("meta.json").path)
-                    && !fm.fileExists(atPath: $0.appendingPathComponent("transcript.json").path)
+                !FileManager.default.fileExists(atPath: $0.appendingPathComponent("transcript.json").path)
             }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         for dir in pending where !queue.contains(dir) {
@@ -103,6 +120,7 @@ actor TranscriptionCoordinator {
         let engine = try await preparedEngine()
 
         var merged: [Transcript.Segment] = []
+        var successfulTracks = 0
         for track in meta.tracks {
             publish(.transcribing(
                 session: dir.lastPathComponent,
@@ -124,6 +142,7 @@ actor TranscriptionCoordinator {
                 log(dir, "skipping \(track.file): \(error)")
                 continue
             }
+            successfulTracks += 1
             let offset = TimeInterval(track.offsetMs) / 1000
             merged += segments.map {
                 Transcript.Segment(
@@ -135,6 +154,10 @@ actor TranscriptionCoordinator {
             }
         }
         merged.sort { $0.start_ms < $1.start_ms }
+
+        guard successfulTracks > 0 else {
+            throw TranscriptionError.noUsableTracks
+        }
 
         let transcript = Transcript(
             engine: engine.name,
@@ -164,15 +187,32 @@ actor TranscriptionCoordinator {
     /// as its sole argument, after the transcript exists (or immediately after
     /// recording when transcription is disabled).
     private func runHook(for dir: URL) {
-        guard let cmd = Config.onStop() else { return }
+        guard !hookWasFired(for: dir) else { return }
+        guard let cmd = Config.onStop() else {
+            markHookFired(for: dir)
+            return
+        }
         let task = Process()
         task.launchPath = "/bin/sh"
         task.arguments = ["-c", "\(cmd) \"$0\"", dir.path]
         do {
             try task.run()
+            markHookFired(for: dir)
         } catch {
             log(dir, "on_stop hook failed to launch: \(error)")
         }
+    }
+
+    private func hookWasFired(for dir: URL) -> Bool {
+        FileManager.default.fileExists(atPath: hookMarkerURL(for: dir).path)
+    }
+
+    private func hookMarkerURL(for dir: URL) -> URL {
+        dir.appendingPathComponent(Self.hookMarkerName)
+    }
+
+    private func markHookFired(for dir: URL) {
+        FileManager.default.createFile(atPath: hookMarkerURL(for: dir).path, contents: Data())
     }
 
     private func log(_ dir: URL, _ message: String) {
@@ -189,6 +229,14 @@ actor TranscriptionCoordinator {
 
     private func publish(_ status: Status) {
         statusHandler?(status)
+    }
+}
+
+private enum TranscriptionError: Error, CustomStringConvertible {
+    case noUsableTracks
+
+    var description: String {
+        "no usable audio tracks were transcribed"
     }
 }
 

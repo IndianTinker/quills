@@ -190,8 +190,10 @@ final class AppController {
     }
 
     private func startSession() {
+        var newSession: RecordingSession?
         do {
-            let newSession = try RecordingSession(root: root)
+            newSession = try RecordingSession(root: root)
+            guard let newSession else { return }
             try newSession.start()
             session = newSession
             QuillMCPStatus.write(
@@ -201,6 +203,7 @@ final class AppController {
             )
             FileHandle.standardError.write(Data("● recording → \(newSession.dir.path)\n".utf8))
         } catch {
+            newSession?.discard()
             FileHandle.standardError.write(Data("recording start failed: \(error)\n".utf8))
             notifyUser(title: "quill — recording failed", body: "\(error)")
             return
@@ -227,11 +230,19 @@ final class AppController {
         menuBar.update(recording: false, elapsed: nil)
 
         let dir = session.dir
-        QuillMCPStatus.write(
-            recording: false,
-            transcriptionState: "queued",
-            transcriptionSession: dir.lastPathComponent
-        )
+        if Config.transcriptionEnabled() {
+            QuillMCPStatus.write(
+                recording: false,
+                transcriptionState: "queued",
+                transcriptionSession: dir.lastPathComponent
+            )
+        } else {
+            QuillMCPStatus.write(
+                recording: false,
+                transcriptionState: "disabled",
+                transcriptionSession: dir.lastPathComponent
+            )
+        }
         Task { [transcription] in await transcription.enqueue(dir) }
     }
 
