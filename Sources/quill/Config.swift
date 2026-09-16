@@ -22,6 +22,11 @@ enum Config {
     static let path = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".config/quill/config.json")
 
+    static let mcpStatusURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/Quill/status.json")
+
+    static let defaultMCPPort = 47777
+
     static let defaultRoot = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Recordings", isDirectory: true)
 
@@ -36,6 +41,14 @@ enum Config {
     static func onStop() -> String? {
         guard let cmd = load()?["on_stop"] as? String, !cmd.isEmpty else { return nil }
         return cmd
+    }
+
+    /// Local-only MCP server port. The server always binds to 127.0.0.1.
+    static func mcpPort() -> Int {
+        guard let port = load()?["mcp_port"] as? Int, (1024...65535).contains(port) else {
+            return defaultMCPPort
+        }
+        return port
     }
 
     /// Whether finished recordings are transcribed automatically. Default on.

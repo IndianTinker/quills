@@ -8,10 +8,17 @@ final class MenuBarController {
     private let statusItem: NSStatusItem
     private let stateLabel: NSMenuItem
     private let transcriptionLabel: NSMenuItem
+    private let mcpStateLabel: NSMenuItem
     private let toggleItem: NSMenuItem
+    private let mcpStartItem: NSMenuItem
+    private let mcpStopItem: NSMenuItem
+    private let mcpRestartItem: NSMenuItem
 
     var onToggle: (() -> Void)?
     var onOpenFolder: (() -> Void)?
+    var onMCPStart: (() -> Void)?
+    var onMCPStop: (() -> Void)?
+    var onMCPRestart: (() -> Void)?
     var onQuit: (() -> Void)?
 
     init() {
@@ -47,6 +54,31 @@ final class MenuBarController {
 
         menu.addItem(.separator())
 
+        mcpStateLabel = NSMenuItem(title: "MCP server: stopped", action: nil, keyEquivalent: "")
+        mcpStateLabel.isEnabled = false
+        menu.addItem(mcpStateLabel)
+
+        mcpStartItem = NSMenuItem(
+            title: "Start MCP server",
+            action: #selector(mcpStartClicked),
+            keyEquivalent: ""
+        )
+        mcpStopItem = NSMenuItem(
+            title: "Stop MCP server",
+            action: #selector(mcpStopClicked),
+            keyEquivalent: ""
+        )
+        mcpRestartItem = NSMenuItem(
+            title: "Restart MCP server",
+            action: #selector(mcpRestartClicked),
+            keyEquivalent: ""
+        )
+        menu.addItem(mcpStartItem)
+        menu.addItem(mcpStopItem)
+        menu.addItem(mcpRestartItem)
+
+        menu.addItem(.separator())
+
         let quit = NSMenuItem(
             title: "Quit quill",
             action: #selector(quitClicked),
@@ -54,7 +86,7 @@ final class MenuBarController {
         )
         menu.addItem(quit)
 
-        for item in [toggleItem, openFolder, quit] {
+        for item in [toggleItem, openFolder, mcpStartItem, mcpStopItem, mcpRestartItem, quit] {
             item.target = self
         }
 
@@ -88,6 +120,31 @@ final class MenuBarController {
         statusItem.button?.toolTip = text
     }
 
+    func updateMCP(state: MCPServerState, port: Int) {
+        switch state {
+        case .stopped:
+            mcpStateLabel.title = "MCP server: stopped"
+            mcpStartItem.isEnabled = true
+            mcpStopItem.isEnabled = false
+            mcpRestartItem.isEnabled = false
+        case .starting:
+            mcpStateLabel.title = "MCP server: starting…"
+            mcpStartItem.isEnabled = false
+            mcpStopItem.isEnabled = true
+            mcpRestartItem.isEnabled = false
+        case .running:
+            mcpStateLabel.title = "MCP server: running · 127.0.0.1:\(port)"
+            mcpStartItem.isEnabled = false
+            mcpStopItem.isEnabled = true
+            mcpRestartItem.isEnabled = true
+        case .failed(let message):
+            mcpStateLabel.title = "MCP server: failed · \(message)"
+            mcpStartItem.isEnabled = true
+            mcpStopItem.isEnabled = false
+            mcpRestartItem.isEnabled = false
+        }
+    }
+
     private func statusBarTitle(for text: String) -> String {
         if text.hasPrefix("transcription failed") { return "Transcription failed" }
         if text.hasPrefix("loading") { return "Loading model…" }
@@ -118,5 +175,15 @@ final class MenuBarController {
 
     @objc private func toggleClicked() { onToggle?() }
     @objc private func openFolderClicked() { onOpenFolder?() }
+    @objc private func mcpStartClicked() { onMCPStart?() }
+    @objc private func mcpStopClicked() { onMCPStop?() }
+    @objc private func mcpRestartClicked() { onMCPRestart?() }
     @objc private func quitClicked() { onQuit?() }
+}
+
+enum MCPServerState: Equatable {
+    case stopped
+    case starting
+    case running
+    case failed(String)
 }

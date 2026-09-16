@@ -32,6 +32,17 @@ The following additions were made in this fork:
 - **Documentation and installation updates** — documented shared-model reuse,
   first-use setup, custom model paths, and background launch-at-login usage.
 
+### 2026-09-16 — downstream fork contributions
+
+- **Local read-only MCP server** — added a loopback-only, multi-client MCP
+  endpoint for meeting status, metadata, transcript search, and transcript
+  reads. It has no recording, editing, or deletion tools and does not make
+  outbound network requests.
+- **Menu-bar MCP lifecycle controls** — added MCP status plus Start, Stop, and
+  Restart actions to the feather menu. Quill stops the MCP child before a
+  normal application exit, and launch-at-login starts both without an open
+  terminal.
+
 These changes are maintained here as downstream contributions on top of the
 upstream project. See the repository history for the individual commits and
 implementation details.
@@ -46,6 +57,24 @@ sudo install -m 755 .build/release/quill /usr/local/bin/quill
 quill models --download           # downloads only if VoiceInk has not already
 quill install --launch-at-login   # optional: start in the menu bar on login
 ```
+
+### Updating an existing installation
+
+After pulling new Quill changes, stop the old LaunchAgent, replace the binary,
+and register the LaunchAgent again:
+
+```sh
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.digimata.quill.plist 2>/dev/null || true
+swift build -c release
+sudo install -m 755 .build/release/quill /usr/local/bin/quill
+quill install --launch-at-login
+```
+
+The last command starts Quill and its MCP server in the menu bar. The Terminal
+window can then be closed; the LaunchAgent keeps Quill running at login. The
+feather menu shows MCP status and provides Start, Stop, and Restart controls.
+Quill handles normal LaunchAgent termination gracefully and closes its MCP
+child before exiting.
 
 **Requires:** macOS 15+ (Core Audio process taps for system audio — no
 virtual device, no kernel extension). Apple Silicon recommended for
@@ -150,9 +179,45 @@ quill                        # run the menu-bar daemon (^C to quit)
 quill run --out <dir>        # custom recordings root (default ~/Recordings)
 quill doctor                 # check permissions, recordings folder, models
 quill models --download      # pre-download/reuse shared multilingual v3 model
+quill mcp                    # run the local read-only MCP server directly
 quill install --launch-at-login
 quill install --uninstall
 ```
+
+## MCP server
+
+Quill includes a local, read-only [MCP](https://modelcontextprotocol.io/)
+server for consuming meeting data from MCP clients. When Quill is running in
+the menu bar, it starts the server automatically at:
+
+```text
+http://127.0.0.1:47777/mcp
+```
+
+The server binds only to loopback, reads only from the configured recordings
+folder and Quill's local runtime-status file, and has no outbound network
+client. It exposes status, meeting metadata, transcript search, and complete
+transcript reads. It does not expose recording, editing, deletion, or any
+other write operation. The endpoint uses independent MCP sessions, so Claude
+Code, Codex, OpenCode, and other clients can connect concurrently to the same
+running Quill instance.
+
+Use the feather menu-bar icon to see whether MCP is running and to **Start**,
+**Stop**, or **Restart** it. Choosing **Quit quill** stops the MCP child
+process before Quill exits. With `quill install --launch-at-login`, the menu
+bar app (and its MCP server) starts without leaving a terminal open.
+
+The port can be changed in `~/.config/quill/config.json`:
+
+```json
+{
+  "mcp_port": 47777
+}
+```
+
+This server being local does not make a cloud MCP client local: a client that
+sends transcript content to a hosted model can still transmit that content.
+For end-to-end local processing, use a local MCP client and local model.
 
 ## Stack
 

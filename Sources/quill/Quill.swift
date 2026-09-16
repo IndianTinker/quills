@@ -4,11 +4,11 @@ import FluidAudio
 import Foundation
 
 @main
-struct Quill: ParsableCommand {
+struct Quill: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "quill",
         abstract: "Local meeting recorder + transcriber. Records mic and system audio as two tracks, then transcribes on-device.",
-        subcommands: [Run.self, Doctor.self, Install.self, Models.self],
+        subcommands: [Run.self, Doctor.self, Install.self, Models.self, MCPServerCommand.self],
         defaultSubcommand: Run.self
     )
 }
@@ -53,6 +53,14 @@ struct Run: ParsableCommand {
         }
         sigint.resume()
         signal(SIGINT, SIG_IGN)
+
+        let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        sigterm.setEventHandler {
+            FileHandle.standardError.write(Data("\nshutting down\n".utf8))
+            MainActor.assumeIsolated { controller.shutdown() }
+        }
+        sigterm.resume()
+        signal(SIGTERM, SIG_IGN)
 
         FileHandle.standardError.write(Data(
             "quill up · recordings → \(root.path) · ^C to quit\n".utf8
@@ -113,15 +121,26 @@ final class AppController {
     private let root: URL
     private let menuBar = MenuBarController()
     private let transcription = TranscriptionCoordinator()
+    private let mcpServer = MCPServerProcess(port: Config.mcpPort())
     private var session: RecordingSession?
     private var ticker: Timer?
+    private var shuttingDown = false
 
     init(root: URL) {
         self.root = root
         menuBar.onToggle = { [weak self] in self?.toggle() }
         menuBar.onOpenFolder = { [weak self] in self?.openFolder() }
+        menuBar.onMCPStart = { [weak self] in self?.mcpServer.start() }
+        menuBar.onMCPStop = { [weak self] in self?.mcpServer.stop() }
+        menuBar.onMCPRestart = { [weak self] in self?.mcpServer.restart() }
         menuBar.onQuit = { [weak self] in self?.shutdown() }
         menuBar.update(recording: false, elapsed: nil)
+        menuBar.updateMCP(state: mcpServer.state, port: mcpServer.port)
+        mcpServer.onStateChange = { [weak self] state in
+            self?.menuBar.updateMCP(state: state, port: self?.mcpServer.port ?? Config.defaultMCPPort)
+        }
+        QuillMCPStatus.write(recording: false, transcriptionState: "idle")
+        mcpServer.start()
 
         Task { [transcription, root] in
             await transcription.setStatusHandler { status in
@@ -135,8 +154,12 @@ final class AppController {
 
     /// Stop any live session cleanly (finalizing files) and exit.
     func shutdown() {
+        guard !shuttingDown else { return }
+        shuttingDown = true
         stopSession()
-        NSApp.terminate(nil)
+        mcpServer.stop {
+            NSApp.terminate(nil)
+        }
     }
 
     private func toggle() {
@@ -152,6 +175,11 @@ final class AppController {
             let newSession = try RecordingSession(root: root)
             try newSession.start()
             session = newSession
+            QuillMCPStatus.write(
+                recording: true,
+                recordingSession: newSession.dir.lastPathComponent,
+                transcriptionState: "idle"
+            )
             FileHandle.standardError.write(Data("● recording → \(newSession.dir.path)\n".utf8))
         } catch {
             FileHandle.standardError.write(Data("recording start failed: \(error)\n".utf8))
@@ -178,6 +206,11 @@ final class AppController {
         menuBar.update(recording: false, elapsed: nil)
 
         let dir = session.dir
+        QuillMCPStatus.write(
+            recording: false,
+            transcriptionState: "queued",
+            transcriptionSession: dir.lastPathComponent
+        )
         Task { [transcription] in await transcription.enqueue(dir) }
     }
 
@@ -185,16 +218,36 @@ final class AppController {
         switch status {
         case .idle:
             menuBar.updateTranscription(nil)
+            QuillMCPStatus.write(recording: session != nil, transcriptionState: "idle")
         case .loadingModel(let name, let queued):
             menuBar.updateTranscription(
                 queued > 0 ? "loading shared Parakeet v3 · \(name) · \(queued) queued" : "loading shared Parakeet v3 · \(name)"
+            )
+            QuillMCPStatus.write(
+                recording: session != nil,
+                transcriptionState: "loading_model",
+                transcriptionSession: name,
+                queued: queued
             )
         case .transcribing(let name, let track, let queued):
             menuBar.updateTranscription(
                 queued > 0 ? "transcribing \(track) · \(name) · \(queued) queued" : "transcribing \(track) · \(name)"
             )
+            QuillMCPStatus.write(
+                recording: session != nil,
+                transcriptionState: "transcribing",
+                transcriptionSession: name,
+                transcriptionTrack: track,
+                queued: queued
+            )
         case .failed(let name):
             menuBar.updateTranscription("transcription failed · \(name)")
+            QuillMCPStatus.write(
+                recording: session != nil,
+                transcriptionState: "failed",
+                transcriptionSession: name,
+                error: "transcription failed"
+            )
         }
     }
 
