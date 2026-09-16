@@ -23,15 +23,29 @@ struct Run: AsyncParsableCommand {
     var out: String?
 
     func run() async throws {
-        try await MainActor.run {
-            try runMain()
+        let root = Config.resolveRoot(cliOverride: out)
+        let runtime = try await MainActor.run { try AppRuntime(root: root) }
+
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                runtime.app.run()
+                withExtendedLifetime(runtime) {}
+                continuation.resume()
+            }
         }
     }
+}
+
+/// Creates AppKit state on MainActor, then keeps the AppKit run loop separate
+/// from Swift's MainActor executor. Calling NSApplication.run() inside a
+/// MainActor task blocks every MainActor-bound status and queue task.
+private final class AppRuntime: @unchecked Sendable {
+    let app: NSApplication
+    let controller: AppController
+    let signalSources: [DispatchSourceSignal]
 
     @MainActor
-    private func runMain() throws {
-        let root = Config.resolveRoot(cliOverride: out)
-
+    init(root: URL) throws {
         // Non-blocking: permissions prompt on first recording, so warnings at
         // startup are informational, not fatal.
         let checks = DoctorReport.run(recordingsRoot: root)
@@ -41,16 +55,17 @@ struct Run: AsyncParsableCommand {
             throw ExitCode(1)
         }
 
-        let app = NSApplication.shared
+        app = NSApplication.shared
         app.setActivationPolicy(.accessory)
 
-        let controller = AppController(root: root)
+        controller = AppController(root: root)
+        let controllerForSignals = controller
 
         signal(SIGINT, SIG_IGN)
         let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
         sigint.setEventHandler {
             FileHandle.standardError.write(Data("\nshutting down\n".utf8))
-            Task { @MainActor in controller.shutdown() }
+            Task { @MainActor in controllerForSignals.shutdown() }
         }
         sigint.resume()
 
@@ -58,16 +73,14 @@ struct Run: AsyncParsableCommand {
         let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
         sigterm.setEventHandler {
             FileHandle.standardError.write(Data("\nshutting down\n".utf8))
-            Task { @MainActor in controller.shutdown() }
+            Task { @MainActor in controllerForSignals.shutdown() }
         }
         sigterm.resume()
+        signalSources = [sigint, sigterm]
 
         FileHandle.standardError.write(Data(
             "quill up · recordings → \(root.path) · ^C to quit\n".utf8
         ))
-        withExtendedLifetime((sigint, sigterm)) {
-            app.run()
-        }
     }
 }
 
@@ -191,9 +204,11 @@ final class AppController {
         }
 
         menuBar.update(recording: true, elapsed: "0:00")
-        ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.tick() }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.tick() }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        ticker = timer
     }
 
     private func stopSession() {
