@@ -5,6 +5,11 @@ click records your mic and all system audio as two separate tracks; when you
 stop, quill transcribes both on-device and writes a speaker-tagged transcript.
 Nothing ever leaves the machine.
 
+Quill works on its own; VoiceInk and other transcription apps are optional.
+On first transcription, it downloads its speech model if needed (an internet
+connection is required for that download). After setup, transcription runs
+offline. You can also download the model in advance with `quill models --download`.
+
 Named for the feather. Sibling of [parrot](https://github.com/digimata/parrot), same skeleton: single
 Swift binary, menu-bar tray, no app bundle.
 
@@ -53,10 +58,15 @@ implementation details.
 git clone https://github.com/IndianTinker/quills.git
 cd quills
 swift build -c release
+codesign --force --sign "<your codesigning identity>" .build/release/quill
 sudo install -m 755 .build/release/quill /usr/local/bin/quill
-quill models --download           # downloads only if VoiceInk has not already
+quill models --download           # optional: prepare the model before first use
 quill install --launch-at-login   # optional: start in the menu bar on login
 ```
+
+See [Code signing (why it matters)](#code-signing-why-it-matters) — without this
+step, Quill asks for microphone and System Audio Recording permission on every
+recording.
 
 ### Updating an existing installation
 
@@ -66,9 +76,29 @@ and register the LaunchAgent again:
 ```sh
 launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.digimata.quill.plist 2>/dev/null || true
 swift build -c release
+codesign --force --sign "<your codesigning identity>" .build/release/quill
 sudo install -m 755 .build/release/quill /usr/local/bin/quill
 quill install --launch-at-login
 ```
+
+### Code signing (why it matters)
+
+The signed binary is not optional. `swift build` produces an ad-hoc, linker-signed
+executable with no stable code identity, and macOS privacy (TCC) binds permission
+grants — microphone, System Audio Recording — to the binary's identity. An ad-hoc
+binary has no usable identity, so macOS prompts for permissions on every single
+recording and never remembers the grant.
+
+Sign with a real codesigning identity once and the prompts stop: the first
+recording asks, every later recording is remembered. Rebuilds keep the grants as
+long as the same identity signs the new binary. List available identities with:
+
+```sh
+security find-identity -v -p codesigning
+```
+
+Any Apple Development identity works; a self-signed code-signing certificate
+created in Keychain Access works too.
 
 The last command starts Quill and its MCP server in the menu bar. The Terminal
 window can then be closed; the LaunchAgent keeps Quill running at login. The
@@ -86,11 +116,19 @@ transcription speed.
 1. **Run it** (`quill` in a terminal, or the LaunchAgent).
 2. **Click the feather in the menu bar → Start recording.** First use prompts
    for microphone and System Audio Recording permissions. While recording, the
-   icon turns red with a running elapsed counter, and macOS shows the purple
+   white feather shows a red dot at its bottom-right, the menu shows a
+   running elapsed counter, and macOS shows the purple
    recording indicator.
 3. **Click → Stop recording** when the meeting ends. Transcription starts
    automatically. The status bar shows model loading and transcription
    progress; a notification fires when the transcript is ready.
+
+Press **Control–Option–Command–R (⌃⌥⌘R)** from any app to start or stop a
+recording. This provides access even if macOS hides Quill in a crowded menu
+bar. The feather stays one fixed icon wide; status details live in its menu
+and tooltip. If another app has claimed the shortcut, Quill logs a warning
+and its menu control remains available. The shortcut needs no Accessibility
+permission.
 
 Each session lands in `~/Recordings/<yyyy.MM.dd-HHmm>/`:
 
@@ -116,8 +154,9 @@ Built in, on-device, automatic. The engine is **Parakeet TDT 0.6B v3**
 [FluidAudio](https://github.com/FluidInference/FluidAudio)'s Core ML port.
 It uses FluidAudio's shared user-level cache at
 `~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3`. If
-VoiceInk has already installed v3, Quill reuses it immediately. If it is not
-there, `quill models --download` (or the first transcription while online)
+another app such as VoiceInk has already installed a compatible v3 bundle,
+Quill reuses those files. If the model is absent,
+`quill models --download` (or the first transcription while online)
 downloads v3 into that same shared cache. Quill never keeps a second private
 model copy.
 
@@ -129,7 +168,21 @@ quill doctor
 ```
 
 Each track is transcribed separately, shifted by its start offset so both
-share one clock, and merged by timestamp. Jobs run in a serial queue — you can
+share one clock, and merged by timestamp. Before writing, Quill filters long,
+nearly identical microphone spans that overlap the same system speech, keeping
+the system version as `them`. This reduces speaker playback appearing twice.
+Replies under five words, distinct speech, and later repetitions are preserved.
+It is conservative and may leave echoes with substantially different recognition.
+The feather pulses continuously during both model loading and transcription
+(recording still takes priority with a white feather and red dot). The dropdown
+also shows the current model: Parakeet TDT 0.6B v3.
+
+Shared model files do not mean shared live inference: Quill loads its own
+Core ML model instance and releases it when the queue drains. Reusing a model
+already loaded inside VoiceInk would require VoiceInk to expose an inference
+service that Quill can call.
+
+Jobs run in a serial queue — you can
 start a new recording while the last one transcribes. Unfinished jobs resume
 on next launch (the filesystem is the queue: a session with `meta.json` but no
 `transcript.json` is pending). Failures append to the session's

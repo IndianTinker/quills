@@ -9,6 +9,7 @@ import Foundation
 /// directory (including a symlink). Missing models download to that selected
 /// directory; quill never copies an existing bundle elsewhere.
 actor ParakeetEngine: TranscriptionEngine {
+    static let displayName = "Parakeet TDT 0.6B v3"
     enum EngineError: Error, CustomStringConvertible {
         case notPrepared
         case unreadableAudio(URL, Error?)

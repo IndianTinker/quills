@@ -4,7 +4,7 @@ import FluidAudio
 import Foundation
 
 @main
-struct Quill: AsyncParsableCommand {
+struct Quill: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "quill",
         abstract: "Local meeting recorder + transcriber. Records mic and system audio as two tracks, then transcribes on-device.",
@@ -13,7 +13,7 @@ struct Quill: AsyncParsableCommand {
     )
 }
 
-struct Run: AsyncParsableCommand {
+struct Run: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "run",
         abstract: "Run the menu-bar daemon (default)."
@@ -22,30 +22,23 @@ struct Run: AsyncParsableCommand {
     @Option(name: .long, help: "Recordings root directory (overrides the config file).")
     var out: String?
 
-    func run() async throws {
-        let root = Config.resolveRoot(cliOverride: out)
-        let runtime = try await MainActor.run { try AppRuntime(root: root) }
-
-        await withCheckedContinuation { continuation in
-            DispatchQueue.main.async {
-                runtime.app.run()
-                withExtendedLifetime(runtime) {}
-                continuation.resume()
-            }
-        }
+    func run() throws {
+        // ArgumentParser invokes run() on the main thread; promote that fact
+        // to the type system so AppKit calls are cleanly isolated.
+        try MainActor.assumeIsolated { try runMain() }
     }
-}
 
-/// Creates AppKit state on MainActor, then keeps the AppKit run loop separate
-/// from Swift's MainActor executor. Calling NSApplication.run() inside a
-/// MainActor task blocks every MainActor-bound status and queue task.
-private final class AppRuntime: @unchecked Sendable {
-    let app: NSApplication
-    let controller: AppController
-    let signalSources: [DispatchSourceSignal]
-
+    // NSApplication.run() MUST be entered directly from the main thread, not
+    // from a main dispatch-queue block (which is the only way an async main
+    // can reach it). The AppKit run loop started this way keeps draining the
+    // main queue, so every `Task { @MainActor … }` (ticker ticks, transcript
+    // status, MCP state callbacks) keeps executing. Entered from inside a
+    // main-queue block instead, NSApp.run() runs the loop without servicing
+    // the main queue and all MainActor work freezes for the process lifetime.
     @MainActor
-    init(root: URL) throws {
+    private func runMain() throws {
+        let root = Config.resolveRoot(cliOverride: out)
+
         // Non-blocking: permissions prompt on first recording, so warnings at
         // startup are informational, not fatal.
         let checks = DoctorReport.run(recordingsRoot: root)
@@ -55,10 +48,10 @@ private final class AppRuntime: @unchecked Sendable {
             throw ExitCode(1)
         }
 
-        app = NSApplication.shared
+        let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
 
-        controller = AppController(root: root)
+        let controller = AppController(root: root)
         let controllerForSignals = controller
 
         signal(SIGINT, SIG_IGN)
@@ -76,11 +69,11 @@ private final class AppRuntime: @unchecked Sendable {
             Task { @MainActor in controllerForSignals.shutdown() }
         }
         sigterm.resume()
-        signalSources = [sigint, sigterm]
 
         FileHandle.standardError.write(Data(
             "quill up · recordings → \(root.path) · ^C to quit\n".utf8
         ))
+        app.run()
     }
 }
 
@@ -101,7 +94,7 @@ struct Doctor: ParsableCommand {
 /// Download the shared model before a meeting, rather than waiting for the
 /// first finished recording. By default FluidAudio uses one user-level cache,
 /// but `transcription.model_dir` can select another compatible directory.
-struct Models: AsyncParsableCommand {
+struct Models: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "models",
         abstract: "Manage the shared Parakeet transcription model."
@@ -110,7 +103,7 @@ struct Models: AsyncParsableCommand {
     @Flag(name: .long, help: "Download the shared multilingual Parakeet v3 model now.")
     var download = false
 
-    func run() async throws {
+    func run() throws {
         guard download else {
             throw ValidationError("use `quill models --download`")
         }
@@ -123,9 +116,55 @@ struct Models: AsyncParsableCommand {
         }
 
         print("downloading shared multilingual Parakeet v3 model…")
-        _ = try await AsrModels.download(to: cache, version: .v3)
-        print("✓ shared Parakeet v3 model installed")
-        print("  \(cache.path)")
+        switch SyncBridge.perform({ _ = try await AsrModels.download(to: cache, version: .v3) }) {
+        case .success:
+            print("✓ shared Parakeet v3 model installed")
+            print("  \(cache.path)")
+        case .failure(let error):
+            throw error
+        }
+    }
+}
+
+/// Bridges async work into a synchronous subcommand. The main thread parks on
+/// a semaphore while the work runs on the global concurrency pool, which has
+/// no dependency on the main thread.
+private enum SyncBridge {
+    struct BridgeTimeout: Error {}
+
+    final class Box: @unchecked Sendable {
+        private let lock = NSLock()
+        private var result: Result<Void, Error>?
+
+        func store(_ result: Result<Void, Error>) {
+            lock.lock()
+            self.result = result
+            lock.unlock()
+        }
+
+        func take() -> Result<Void, Error> {
+            lock.lock()
+            defer { lock.unlock() }
+            return result ?? .failure(BridgeTimeout())
+        }
+    }
+
+    static func perform(
+        _ work: @escaping @Sendable () async throws -> Void
+    ) -> Result<Void, Error> {
+        let box = Box()
+        let semaphore = DispatchSemaphore(value: 0)
+        Task.detached {
+            do {
+                try await work()
+                box.store(.success(()))
+            } catch {
+                box.store(.failure(error))
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return box.take()
     }
 }
 
@@ -160,7 +199,7 @@ final class AppController {
 
         Task { [transcription, root] in
             await transcription.setStatusHandler { status in
-                Task { @MainActor [weak self] in
+                await MainActor.run { [weak self] in
                     self?.showTranscription(status)
                 }
             }
@@ -178,6 +217,7 @@ final class AppController {
         // bar app unable to quit. The MCP process is asked to stop first and
         // also detects its parent's disappearance as a fallback.
         mcpServer.stop()
+        menuBar.stop()
         NSApp.terminate(nil)
     }
 

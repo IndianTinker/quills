@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 
 /// Status bar item in the top-right of the menu bar. Shows recording state at
 /// a glance and provides the only persistent control surface for the daemon
@@ -13,6 +14,10 @@ final class MenuBarController {
     private let mcpStartItem: NSMenuItem
     private let mcpStopItem: NSMenuItem
     private let mcpRestartItem: NSMenuItem
+    private var recordingShortcut: RecordingShortcut?
+    private let recordingDot = RecordingDotView(frame: .zero)
+    private let featherView = StatusFeatherView(frame: .zero)
+    private var transcriptionText: String?
 
     var onToggle: (() -> Void)?
     var onOpenFolder: (() -> Void)?
@@ -21,8 +26,11 @@ final class MenuBarController {
     var onMCPRestart: (() -> Void)?
     var onQuit: (() -> Void)?
 
+    private var isRecording = false
+    private var isProcessingTranscript = false
+
     init() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -35,6 +43,10 @@ final class MenuBarController {
         transcriptionLabel.isEnabled = false
         transcriptionLabel.isHidden = true
         menu.addItem(transcriptionLabel)
+
+        let modelLabel = NSMenuItem(title: "Model: \(ParakeetEngine.displayName)", action: nil, keyEquivalent: "")
+        modelLabel.isEnabled = false
+        menu.addItem(modelLabel)
 
         menu.addItem(.separator())
 
@@ -91,33 +103,66 @@ final class MenuBarController {
         }
 
         statusItem.menu = menu
+        recordingShortcut = RecordingShortcut { [weak self] in self?.onToggle?() }
+        if recordingShortcut != nil {
+            toggleItem.keyEquivalentModifierMask = [.command, .option, .control]
+        } else {
+            toggleItem.keyEquivalent = ""
+            toggleItem.toolTip = "The global recording shortcut could not be registered."
+            FileHandle.standardError.write(Data("warning: recording shortcut ⌃⌥⌘R unavailable (possibly already in use)\n".utf8))
+        }
 
         if let button = statusItem.button {
             let image = Self.featherImage()
-            image?.isTemplate = true
-            button.image = image
-            button.imagePosition = .imageLeft
+            image?.isTemplate = false
+            featherView.image = image
+            featherView.wantsLayer = true
+            featherView.translatesAutoresizingMaskIntoConstraints = false
+            featherView.setAccessibilityElement(false)
+            button.addSubview(featherView)
+            recordingDot.translatesAutoresizingMaskIntoConstraints = false
+            recordingDot.isHidden = true
+            recordingDot.setAccessibilityElement(false)
+            button.addSubview(recordingDot)
+            NSLayoutConstraint.activate([
+                featherView.widthAnchor.constraint(equalToConstant: 16),
+                featherView.heightAnchor.constraint(equalToConstant: 16),
+                featherView.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+                featherView.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+                recordingDot.widthAnchor.constraint(equalToConstant: 5),
+                recordingDot.heightAnchor.constraint(equalToConstant: 5),
+                recordingDot.centerXAnchor.constraint(equalTo: button.centerXAnchor, constant: 8),
+                recordingDot.centerYAnchor.constraint(equalTo: button.centerYAnchor, constant: button.isFlipped ? 7 : -7)
+            ])
         }
     }
 
     /// Reflect recording state in the icon tint and menu item titles. The
-    /// menu bar shows only the feather (red while recording); the elapsed
-    /// counter lives in the menu's state label. Call once a second while
-    /// recording.
+    /// menu bar shows a white feather with a red dot while recording, pulsing while a
+    /// model loads or a transcript is produced); the elapsed counter lives in the menu's
+    /// state label. Call once a second while recording.
     func update(recording: Bool, elapsed: String?) {
+        isRecording = recording
+        recordingDot.isHidden = !recording
         stateLabel.title = recording ? "● recording · \(elapsed ?? "0:00")" : "idle"
         toggleItem.title = recording ? "Stop recording" : "Start recording"
-        statusItem.button?.contentTintColor = recording ? .systemRed : nil
+        refreshToolTip()
+        refreshIconTint()
     }
 
     /// Show transcription progress/failure both in the menu and directly in
     /// the status bar. Independent of recording state — a new recording can
     /// run while the last one transcribes.
     func updateTranscription(_ text: String?) {
+        transcriptionText = text
         transcriptionLabel.title = text ?? ""
         transcriptionLabel.isHidden = text == nil
-        statusItem.button?.title = text == nil ? "" : "  \(statusBarTitle(for: text!))"
-        statusItem.button?.toolTip = text
+        // Keep the status item one fixed icon wide, including on failure.
+        // Details remain in the menu and tooltip.
+        let failed = text?.hasPrefix("transcription failed") ?? false
+        refreshToolTip()
+        isProcessingTranscript = text != nil && !failed
+        refreshIconTint()
     }
 
     func updateMCP(state: MCPServerState, port: Int) {
@@ -145,10 +190,42 @@ final class MenuBarController {
         }
     }
 
-    private func statusBarTitle(for text: String) -> String {
-        if text.hasPrefix("transcription failed") { return "Transcription failed" }
-        if text.hasPrefix("loading") { return "Loading model…" }
-        return "Transcribing…"
+    func stop() {
+        recordingShortcut?.stop()
+        setPulsing(false)
+    }
+
+    private func refreshToolTip() {
+        var lines = [isRecording ? stateLabel.title : "Quill · idle"]
+        if let transcriptionText { lines.append(transcriptionText) }
+        if recordingShortcut != nil { lines.append("⌃⌥⌘R · start/stop recording") }
+        statusItem.button?.toolTip = lines.joined(separator: "\n")
+        statusItem.button?.setAccessibilityLabel(lines.joined(separator: ". "))
+    }
+
+    private func refreshIconTint() {
+        setPulsing(isProcessingTranscript && !isRecording)
+    }
+
+    /// Use the same continuous pulse for model loading and transcription.
+    private func setPulsing(_ on: Bool) {
+        guard let layer = featherView.layer else { return }
+        if on {
+            guard layer.animation(forKey: "transcriptionPulse") == nil else { return }
+            // Core Animation renders the pulse independently of main-run-loop
+            // timers, so heavy model loading cannot stall the animation.
+            let pulse = CABasicAnimation(keyPath: "opacity")
+            pulse.fromValue = 1.0
+            pulse.toValue = 0.25
+            pulse.duration = 0.8
+            pulse.autoreverses = true
+            pulse.repeatCount = .infinity
+            layer.add(pulse, forKey: "transcriptionPulse")
+            CATransaction.flush()
+        } else {
+            layer.removeAnimation(forKey: "transcriptionPulse")
+            layer.opacity = 1
+        }
     }
 
     // Inlined Lucide feather SVG. Keeping it in source means the executable
@@ -156,7 +233,7 @@ final class MenuBarController {
     // single-binary.
     private static let featherSVG = """
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" \
-    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" \
+    viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.5" \
     stroke-linecap="round" stroke-linejoin="round">\
     <path d="M12.67 19a2 2 0 0 0 1.416-.588l6.154-6.172a6 6 0 0 0-8.49-8.49L5.586 9.914A2 2 0 0 0 5 11.328V18a1 1 0 0 0 1 1z"/>\
     <path d="M16 8 2 22"/>\
@@ -179,6 +256,22 @@ final class MenuBarController {
     @objc private func mcpStopClicked() { onMCPStop?() }
     @objc private func mcpRestartClicked() { onMCPRestart?() }
     @objc private func quitClicked() { onQuit?() }
+}
+
+/// Mouse events pass through both decorative views to the status button.
+@MainActor
+private final class StatusFeatherView: NSImageView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+@MainActor
+private final class RecordingDotView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.systemRed.setFill()
+        NSBezierPath(ovalIn: bounds).fill()
+    }
 }
 
 enum MCPServerState: Equatable {

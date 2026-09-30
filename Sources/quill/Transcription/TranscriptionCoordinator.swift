@@ -22,9 +22,9 @@ actor TranscriptionCoordinator {
     private var draining = false
     private var engine: TranscriptionEngine?
     private var lastFailure: String?
-    private var statusHandler: (@Sendable (Status) -> Void)?
+    private var statusHandler: (@Sendable (Status) async -> Void)?
 
-    func setStatusHandler(_ handler: @escaping @Sendable (Status) -> Void) {
+    func setStatusHandler(_ handler: @escaping @Sendable (Status) async -> Void) {
         statusHandler = handler
     }
 
@@ -94,7 +94,7 @@ actor TranscriptionCoordinator {
     private func drain() async {
         while !queue.isEmpty {
             let dir = queue.removeFirst()
-            publish(.loadingModel(session: dir.lastPathComponent, queued: queue.count))
+            await publish(.loadingModel(session: dir.lastPathComponent, queued: queue.count))
             do {
                 try await transcribe(dir)
                 notifyUser(title: "quill — transcript ready", body: dir.lastPathComponent)
@@ -111,7 +111,7 @@ actor TranscriptionCoordinator {
         }
         await engine?.release()
         engine = nil
-        publish(lastFailure.map { .failed(session: $0) } ?? .idle)
+        await publish(lastFailure.map { .failed(session: $0) } ?? .idle)
         draining = false
         // An enqueue that landed between the loop exiting and the release
         // finishing would otherwise sit until the next enqueue.
@@ -125,7 +125,7 @@ actor TranscriptionCoordinator {
         var merged: [Transcript.Segment] = []
         var successfulTracks = 0
         for track in meta.tracks {
-            publish(.transcribing(
+            await publish(.transcribing(
                 session: dir.lastPathComponent,
                 track: track.file,
                 queued: queue.count
@@ -157,6 +157,10 @@ actor TranscriptionCoordinator {
             }
         }
         merged.sort { $0.start_ms < $1.start_ms }
+        let filtered = TranscriptEchoFilter.removingEcho(from: merged)
+        if filtered.count != merged.count {
+            log(dir, "removed \(merged.count - filtered.count) microphone echo segments")
+        }
 
         guard successfulTracks > 0 else {
             throw TranscriptionError.noUsableTracks
@@ -166,10 +170,10 @@ actor TranscriptionCoordinator {
             engine: engine.name,
             model: engine.model,
             created_at: ISO8601DateFormatter().string(from: Date()),
-            segments: merged
+            segments: filtered
         )
         try transcript.write(to: dir)
-        log(dir, "done — \(merged.count) segments")
+        log(dir, "done — \(filtered.count) segments")
     }
 
     private func preparedEngine() async throws -> TranscriptionEngine {
@@ -243,11 +247,11 @@ actor TranscriptionCoordinator {
         }
     }
 
-    private func publish(_ status: Status) {
-        statusHandler?(status)
+    private func publish(_ status: Status) async {
+        // Let the menu bar start its animation before model loading begins.
+        await statusHandler?(status)
     }
 }
-
 private enum TranscriptionError: Error, CustomStringConvertible {
     case noUsableTracks
 
@@ -296,50 +300,5 @@ private struct SessionMeta {
             tracks.append(Track(file: system, speaker: "them", offsetMs: offsets["system"] ?? 0))
         }
         return SessionMeta(tracks: tracks)
-    }
-}
-
-/// Canonical transcript. Property names are the JSON schema — this struct
-/// exists to be serialized.
-private struct Transcript: Codable {
-    struct Segment: Codable {
-        let speaker: String
-        let start_ms: Int
-        let end_ms: Int
-        let text: String
-    }
-
-    let engine: String
-    let model: String
-    let created_at: String
-    let segments: [Segment]
-
-    /// Write transcript.json and render transcript.md. Both writes are atomic
-    /// (temp file + rename), so a partially written transcript never exists on
-    /// disk — resumePending treats presence of transcript.json as "done".
-    func write(to dir: URL) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(self)
-            .write(to: dir.appendingPathComponent("transcript.json"), options: .atomic)
-        try Data(rendered(title: dir.lastPathComponent).utf8)
-            .write(to: dir.appendingPathComponent("transcript.md"), options: .atomic)
-    }
-
-    private func rendered(title: String) -> String {
-        var lines = ["# \(title)", "", "engine: \(engine) (\(model))", ""]
-        for seg in segments {
-            lines.append("**[\(Self.clock(seg.start_ms))] \(seg.speaker):** \(seg.text)")
-            lines.append("")
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    private static func clock(_ ms: Int) -> String {
-        let total = ms / 1000
-        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
-        return h > 0
-            ? String(format: "%d:%02d:%02d", h, m, s)
-            : String(format: "%d:%02d", m, s)
     }
 }
