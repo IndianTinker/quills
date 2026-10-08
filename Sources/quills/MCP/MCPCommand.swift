@@ -23,7 +23,7 @@ struct MCPServerCommand: ParsableCommand {
         guard (1024...65535).contains(selectedPort) else {
             throw ValidationError("port must be between 1024 and 65535")
         }
-        let server = QuillMCPServer(
+        let server = QuillsMCPServer(
             root: Config.resolveRoot(cliOverride: out),
             port: selectedPort
         )

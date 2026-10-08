@@ -33,7 +33,7 @@ final class SystemAudioRecorder {
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
     private var procID: AudioDeviceIOProcID?
     private var file: AVAudioFile?
-    private let queue = DispatchQueue(label: "com.digimata.quill.system-tap")
+    private let queue = DispatchQueue(label: "com.indiantinker.quills.system-tap")
     private let stateLock = NSLock()
     private var recording = false
     private var firstBufferAtStorage: Date?
@@ -49,7 +49,7 @@ final class SystemAudioRecorder {
         guard !isRecording else { return }
 
         let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
-        description.name = "quill system tap"
+        description.name = "quills system tap"
         description.isPrivate = true
         description.muteBehavior = .unmuted
 
@@ -101,7 +101,7 @@ final class SystemAudioRecorder {
 
     private func createAggregateDevice(tapUUID: UUID) throws {
         let desc: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "quill-tap",
+            kAudioAggregateDeviceNameKey: "quills-tap",
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceIsStackedKey: false,

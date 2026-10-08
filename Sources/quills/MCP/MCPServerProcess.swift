@@ -1,7 +1,7 @@
 import Foundation
 
 /// Owns the local MCP child process. The menu-bar app is its parent, so an
-/// explicit Quill shutdown always stops the MCP server first.
+/// explicit Quills shutdown always stops the MCP server first.
 @MainActor
 final class MCPServerProcess {
     let root: URL
@@ -114,7 +114,7 @@ final class MCPServerProcess {
             }
         }
 
-        let installed = "/usr/local/bin/quill"
+        let installed = "/usr/local/bin/quills"
         if FileManager.default.isExecutableFile(atPath: installed) {
             return installed
         }

@@ -1,14 +1,14 @@
 import Foundation
 import XCTest
 
-@testable import quill
+@testable import quills
 
 final class SessionAndMCPStoreTests: XCTestCase {
     private var root: URL!
 
     override func setUpWithError() throws {
         root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("quill-tests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("quills-tests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }
 
@@ -26,7 +26,7 @@ final class SessionAndMCPStoreTests: XCTestCase {
     }
 
     func testMCPStoreRejectsTraversalMeetingIDs() throws {
-        let store = QuillMCPStore(root: root)
+        let store = QuillsMCPStore(root: root)
 
         XCTAssertNil(store.readTranscript(id: "../outside"))
         XCTAssertNil(store.readTranscript(id: "meeting/nested"))
@@ -34,7 +34,7 @@ final class SessionAndMCPStoreTests: XCTestCase {
     }
 
     func testMCPStoreReadsOnlyTranscriptInsideMeetingFolder() throws {
-        let store = QuillMCPStore(root: root)
+        let store = QuillsMCPStore(root: root)
         let meeting = root.appendingPathComponent("2026.09.16-1200", isDirectory: true)
         try FileManager.default.createDirectory(at: meeting, withIntermediateDirectories: true)
         let transcript = """
@@ -44,13 +44,31 @@ final class SessionAndMCPStoreTests: XCTestCase {
 
         XCTAssertNotNil(store.readTranscript(id: "2026.09.16-1200"))
         XCTAssertNotNil(store.resourceText(
-            uri: "quill://meetings/2026.09.16-1200/transcript",
+            uri: "quills://meetings/2026.09.16-1200/transcript",
             mcpPort: 47777
         ))
+        XCTAssertEqual(
+            store.resourceText(uri: "quill://meetings/2026.09.16-1200/transcript", mcpPort: 47777)?.text,
+            store.resourceText(uri: "quills://meetings/2026.09.16-1200/transcript", mcpPort: 47777)?.text
+        )
+        for scheme in ["quill", "quills"] {
+            XCTAssertNil(store.resourceText(uri: "\(scheme)://meetings/../transcript", mcpPort: 47777))
+            XCTAssertNil(store.resourceText(uri: "\(scheme)://meetings/2026.09.16-1200/transcript/extra", mcpPort: 47777))
+        }
+    }
+
+    func testMCPStatusResourcesPreserveLegacySchema() throws {
+        let store = QuillsMCPStore(root: root)
+        for scheme in ["quill", "quills"] {
+            let resource = try XCTUnwrap(store.resourceText(uri: "\(scheme)://status", mcpPort: 47777))
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(resource.text.utf8)) as? [String: Any])
+            XCTAssertNotNil(json["quill"])
+            XCTAssertNotNil(json["mcp"])
+        }
     }
 
     func testMCPStoreExcludesUnfinalizedAndUnrelatedDirectories() throws {
-        let store = QuillMCPStore(root: root)
+        let store = QuillsMCPStore(root: root)
         try FileManager.default.createDirectory(
             at: root.appendingPathComponent("active-recording", isDirectory: true),
             withIntermediateDirectories: true
@@ -63,7 +81,7 @@ final class SessionAndMCPStoreTests: XCTestCase {
     }
 
     func testMCPStoreReportsPersistedTranscriptionFailure() throws {
-        let store = QuillMCPStore(root: root)
+        let store = QuillsMCPStore(root: root)
         let meeting = root.appendingPathComponent("2026.09.16-1400", isDirectory: true)
         try FileManager.default.createDirectory(at: meeting, withIntermediateDirectories: true)
         try Data("{}".utf8).write(to: meeting.appendingPathComponent("meta.json"))

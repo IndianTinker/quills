@@ -1,10 +1,10 @@
 import Foundation
 import MCP
 
-/// The only data exposed by Quill's MCP server is read from the recordings
+/// The only data exposed by Quills’ MCP server is read from the recordings
 /// directory and the runtime status file. This type intentionally contains no
 /// write operations.
-struct QuillMCPStore: Sendable {
+struct QuillsMCPStore: Sendable {
     let root: URL
     private static let failureMarkerName = ".quill-transcription-failed"
 
@@ -144,7 +144,7 @@ struct QuillMCPStore: Sendable {
     }
 
     func resourceText(uri: String, mcpPort: Int) -> (text: String, mimeType: String)? {
-        if uri == "quill://status" {
+        if uri == "quills://status" || uri == "quill://status" {
             guard let data = try? JSONEncoder.pretty.encode(statusSnapshot(mcpPort: mcpPort)),
                   let text = String(data: data, encoding: .utf8)
             else { return nil }
@@ -160,8 +160,7 @@ struct QuillMCPStore: Sendable {
     }
 
     private func transcriptMeetingID(uri: String) -> String? {
-        let prefix = "quill://meetings/"
-        guard uri.hasPrefix(prefix) else { return nil }
+        guard let prefix = ["quills://meetings/", "quill://meetings/"].first(where: { uri.hasPrefix($0) }) else { return nil }
         let parts = uri.dropFirst(prefix.count).split(separator: "/", omittingEmptySubsequences: false)
         guard parts.count == 2, parts[1] == "transcript", !parts[0].isEmpty else {
             return nil

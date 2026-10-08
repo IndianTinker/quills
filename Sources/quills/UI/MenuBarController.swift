@@ -18,6 +18,7 @@ final class MenuBarController {
     private let recordingDot = RecordingDotView(frame: .zero)
     private let featherView = StatusFeatherView(frame: .zero)
     private var transcriptionText: String?
+    private var storageItems: [NSMenuItem] = []
 
     var onToggle: (() -> Void)?
     var onOpenFolder: (() -> Void)?
@@ -25,6 +26,7 @@ final class MenuBarController {
     var onMCPStop: (() -> Void)?
     var onMCPRestart: (() -> Void)?
     var onQuit: (() -> Void)?
+    var onStorageChange: ((AudioRetention) -> Void)?
 
     private var isRecording = false
     private var isProcessingTranscript = false
@@ -64,6 +66,18 @@ final class MenuBarController {
         )
         menu.addItem(openFolder)
 
+        let storage = NSMenuItem(title: "Storage", action: nil, keyEquivalent: "")
+        let storageMenu = NSMenu(title: "Storage")
+        storageMenu.autoenablesItems = false
+        for (index, retention) in AudioRetention.allCases.enumerated() {
+            let item = NSMenuItem(title: retention.title, action: #selector(storageClicked(_:)), keyEquivalent: "")
+            item.tag = index
+            storageItems.append(item)
+            storageMenu.addItem(item)
+        }
+        storage.submenu = storageMenu
+        menu.addItem(storage)
+
         menu.addItem(.separator())
 
         mcpStateLabel = NSMenuItem(title: "MCP server: stopped", action: nil, keyEquivalent: "")
@@ -92,15 +106,16 @@ final class MenuBarController {
         menu.addItem(.separator())
 
         let quit = NSMenuItem(
-            title: "Quit quill",
+            title: "Quit Quills",
             action: #selector(quitClicked),
             keyEquivalent: "q"
         )
         menu.addItem(quit)
 
-        for item in [toggleItem, openFolder, mcpStartItem, mcpStopItem, mcpRestartItem, quit] {
+        for item in [toggleItem, openFolder, mcpStartItem, mcpStopItem, mcpRestartItem, quit] + storageItems {
             item.target = self
         }
+        updateStorage(Config.audioRetention())
 
         statusItem.menu = menu
         recordingShortcut = RecordingShortcut { [weak self] in self?.onToggle?() }
@@ -195,8 +210,18 @@ final class MenuBarController {
         setPulsing(false)
     }
 
+    func updateStorage(_ retention: AudioRetention) {
+        for item in storageItems {
+            item.state = AudioRetention.allCases[item.tag] == retention ? .on : .off
+        }
+    }
+
+    @objc private func storageClicked(_ sender: NSMenuItem) {
+        onStorageChange?(AudioRetention.allCases[sender.tag])
+    }
+
     private func refreshToolTip() {
-        var lines = [isRecording ? stateLabel.title : "Quill · idle"]
+        var lines = [isRecording ? stateLabel.title : "Quills · idle"]
         if let transcriptionText { lines.append(transcriptionText) }
         if recordingShortcut != nil { lines.append("⌃⌥⌘R · start/stop recording") }
         statusItem.button?.toolTip = lines.joined(separator: "\n")

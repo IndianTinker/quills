@@ -4,9 +4,9 @@ import FluidAudio
 import Foundation
 
 @main
-struct Quill: ParsableCommand {
+struct Quills: ParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "quill",
+        commandName: "quills",
         abstract: "Local meeting recorder + transcriber. Records mic and system audio as two tracks, then transcribes on-device.",
         subcommands: [Run.self, Doctor.self, Install.self, Models.self, MCPServerCommand.self],
         defaultSubcommand: Run.self
@@ -71,7 +71,7 @@ struct Run: ParsableCommand {
         sigterm.resume()
 
         FileHandle.standardError.write(Data(
-            "quill up · recordings → \(root.path) · ^C to quit\n".utf8
+            "quills up · recordings → \(root.path) · ^C to quit\n".utf8
         ))
         app.run()
     }
@@ -105,7 +105,7 @@ struct Models: ParsableCommand {
 
     func run() throws {
         guard download else {
-            throw ValidationError("use `quill models --download`")
+            throw ValidationError("use `quills models --download`")
         }
 
         let cache = Config.transcriptionModelDir()
@@ -189,12 +189,25 @@ final class AppController {
         menuBar.onMCPStop = { [weak self] in self?.mcpServer.stop() }
         menuBar.onMCPRestart = { [weak self] in self?.mcpServer.restart() }
         menuBar.onQuit = { [weak self] in self?.shutdown() }
+        menuBar.onStorageChange = { [weak self] retention in
+            do {
+                try Config.setAudioRetention(retention)
+                self?.menuBar.updateStorage(retention)
+                if let self {
+                    Task { [transcription = self.transcription, root = self.root] in
+                        await transcription.applyAudioRetention(root: root)
+                    }
+                }
+            } catch {
+                notifyUser(title: "Quills — couldn't save storage setting", body: "\(error)")
+            }
+        }
         menuBar.update(recording: false, elapsed: nil)
         menuBar.updateMCP(state: mcpServer.state, port: mcpServer.port)
         mcpServer.onStateChange = { [weak self] state in
             self?.menuBar.updateMCP(state: state, port: self?.mcpServer.port ?? Config.defaultMCPPort)
         }
-        QuillMCPStatus.write(recording: false, transcriptionState: "idle")
+        QuillsMCPStatus.write(recording: false, transcriptionState: "idle")
         mcpServer.start()
 
         Task { [transcription, root] in
@@ -236,7 +249,7 @@ final class AppController {
             guard let newSession else { return }
             try newSession.start()
             session = newSession
-            QuillMCPStatus.write(
+            QuillsMCPStatus.write(
                 recording: true,
                 recordingSession: newSession.dir.lastPathComponent,
                 transcriptionState: "idle"
@@ -245,7 +258,7 @@ final class AppController {
         } catch {
             newSession?.discard()
             FileHandle.standardError.write(Data("recording start failed: \(error)\n".utf8))
-            notifyUser(title: "quill — recording failed", body: "\(error)")
+            notifyUser(title: "Quills — recording failed", body: "\(error)")
             return
         }
 
@@ -266,7 +279,7 @@ final class AppController {
         } catch {
             finalizationError = error
             FileHandle.standardError.write(Data("recording finalization failed: \(error)\n".utf8))
-            notifyUser(title: "quill — recording finalization failed", body: "See the Quill log")
+            notifyUser(title: "Quills — recording finalization failed", body: "See the Quills log")
         }
         let elapsed = Self.format(Date().timeIntervalSince(session.startedAt))
         FileHandle.standardError.write(Data(
@@ -279,7 +292,7 @@ final class AppController {
 
         let dir = session.dir
         if let finalizationError {
-            QuillMCPStatus.write(
+            QuillsMCPStatus.write(
                 recording: false,
                 transcriptionState: "failed",
                 transcriptionSession: dir.lastPathComponent,
@@ -288,13 +301,13 @@ final class AppController {
             return
         }
         if Config.transcriptionEnabled() {
-            QuillMCPStatus.write(
+            QuillsMCPStatus.write(
                 recording: false,
                 transcriptionState: "queued",
                 transcriptionSession: dir.lastPathComponent
             )
         } else {
-            QuillMCPStatus.write(
+            QuillsMCPStatus.write(
                 recording: false,
                 transcriptionState: "disabled",
                 transcriptionSession: dir.lastPathComponent
@@ -307,12 +320,12 @@ final class AppController {
         switch status {
         case .idle:
             menuBar.updateTranscription(nil)
-            QuillMCPStatus.write(recording: session != nil, transcriptionState: "idle")
+            QuillsMCPStatus.write(recording: session != nil, transcriptionState: "idle")
         case .loadingModel(let name, let queued):
             menuBar.updateTranscription(
                 queued > 0 ? "loading shared Parakeet v3 · \(name) · \(queued) queued" : "loading shared Parakeet v3 · \(name)"
             )
-            QuillMCPStatus.write(
+            QuillsMCPStatus.write(
                 recording: session != nil,
                 transcriptionState: "loading_model",
                 transcriptionSession: name,
@@ -322,7 +335,7 @@ final class AppController {
             menuBar.updateTranscription(
                 queued > 0 ? "transcribing \(track) · \(name) · \(queued) queued" : "transcribing \(track) · \(name)"
             )
-            QuillMCPStatus.write(
+            QuillsMCPStatus.write(
                 recording: session != nil,
                 transcriptionState: "transcribing",
                 transcriptionSession: name,
@@ -331,7 +344,7 @@ final class AppController {
             )
         case .failed(let name):
             menuBar.updateTranscription("transcription failed · \(name)")
-            QuillMCPStatus.write(
+            QuillsMCPStatus.write(
                 recording: session != nil,
                 transcriptionState: "failed",
                 transcriptionSession: name,

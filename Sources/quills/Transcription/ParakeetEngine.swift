@@ -4,10 +4,10 @@ import Foundation
 
 /// Parakeet TDT 0.6B v3 (multilingual) via FluidAudio's Core ML port.
 ///
-/// VoiceInk and quill share FluidAudio's user-level model cache by default.
+/// VoiceInk and quills share FluidAudio's user-level model cache by default.
 /// Users may point `transcription.model_dir` at another compatible model
 /// directory (including a symlink). Missing models download to that selected
-/// directory; quill never copies an existing bundle elsewhere.
+/// directory; quills never copies an existing bundle elsewhere.
 actor ParakeetEngine: TranscriptionEngine {
     static let displayName = "Parakeet TDT 0.6B v3"
     enum EngineError: Error, CustomStringConvertible {

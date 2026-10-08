@@ -1,8 +1,8 @@
 import Foundation
 
-/// Runtime state is written by Quill and read by the MCP server. The MCP
+/// Runtime state is written by Quills and read by the MCP server. The MCP
 /// server never writes meeting data or this status file.
-enum QuillMCPStatus {
+enum QuillsMCPStatus {
     static func write(
         recording: Bool,
         recordingSession: String? = nil,
@@ -12,7 +12,7 @@ enum QuillMCPStatus {
         queued: Int = 0,
         error: String? = nil
     ) {
-        let value = QuillMCPStore.RuntimeStatus(
+        let value = QuillsMCPStore.RuntimeStatus(
             updated_at: ISO8601DateFormatter().string(from: Date()),
             recording: recording,
             recording_session: recordingSession,

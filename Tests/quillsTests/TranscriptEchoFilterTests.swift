@@ -1,5 +1,5 @@
 import XCTest
-@testable import quill
+@testable import quills
 
 final class TranscriptEchoFilterTests: XCTestCase {
     private func span(_ speaker: String, _ text: String, _ start: Int = 1000, _ end: Int = 5000) -> Transcript.Segment {

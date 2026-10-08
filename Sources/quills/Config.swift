@@ -56,6 +56,26 @@ enum Config {
         transcription()?["enabled"] as? Bool ?? true
     }
 
+    static func audioRetention() -> AudioRetention {
+        (load()?["audio_retention"] as? String).flatMap(AudioRetention.init(rawValue:)) ?? .keepAll
+    }
+
+    static func setAudioRetention(_ retention: AudioRetention) throws {
+        // Preserve other settings and refuse to overwrite malformed config.
+        var json: [String: Any] = [:]
+        if FileManager.default.fileExists(atPath: path.path) {
+            let data = try Data(contentsOf: path)
+            guard let existing = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            json = existing
+        }
+        json["audio_retention"] = retention.rawValue
+        let data = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
+        try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: path, options: .atomic)
+    }
+
     /// Configured engine name. Only "parakeet" ships today; the coordinator
     /// warns and falls back for anything else.
     static func transcriptionEngine() -> String {

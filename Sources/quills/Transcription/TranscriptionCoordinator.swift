@@ -57,6 +57,7 @@ actor TranscriptionCoordinator {
         for dir in completedWithoutHook {
             runHook(for: dir)
         }
+        applyAudioRetention(root: root)
 
         guard Config.transcriptionEnabled() else {
             for dir in sessions where !hookWasFired(for: dir) {
@@ -97,14 +98,15 @@ actor TranscriptionCoordinator {
             await publish(.loadingModel(session: dir.lastPathComponent, queued: queue.count))
             do {
                 try await transcribe(dir)
-                notifyUser(title: "quill — transcript ready", body: dir.lastPathComponent)
+                applyAudioRetention(root: dir.deletingLastPathComponent())
+                notifyUser(title: "Quills — transcript ready", body: dir.lastPathComponent)
                 runHook(for: dir)
             } catch {
                 log(dir, "transcription failed: \(error)")
                 markTranscriptionFailed(for: dir, error: error)
                 lastFailure = dir.lastPathComponent
                 notifyUser(
-                    title: "quill — transcription failed",
+                    title: "Quills — transcription failed",
                     body: "\(dir.lastPathComponent) — see transcribe.log"
                 )
             }
@@ -173,7 +175,22 @@ actor TranscriptionCoordinator {
             segments: filtered
         )
         try transcript.write(to: dir)
+        if successfulTracks == meta.tracks.count {
+            do {
+                try AudioRetention.markCompleted(dir)
+            } catch {
+                log(dir, "couldn't mark audio for cleanup: \(error)")
+            }
+        }
         log(dir, "done — \(filtered.count) segments")
+    }
+
+    func applyAudioRetention(root: URL) {
+        do {
+            try Config.audioRetention().apply(root: root)
+        } catch {
+            FileHandle.standardError.write(Data("warning: audio cleanup failed: \(error)\n".utf8))
+        }
     }
 
     private func preparedEngine() async throws -> TranscriptionEngine {

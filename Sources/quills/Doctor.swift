@@ -39,7 +39,7 @@ enum DoctorReport {
             return Check(
                 name: "microphone",
                 status: .fail("denied"),
-                remediation: "System Settings → Privacy & Security → Microphone → enable for quill (or your terminal)"
+                remediation: "System Settings → Privacy & Security → Microphone → enable for quills (or your terminal)"
             )
         @unknown default:
             return Check(name: "microphone", status: .fail("unknown state"), remediation: nil)
@@ -93,7 +93,7 @@ enum DoctorReport {
         return Check(
             name: "shared Parakeet v3 model",
             status: .warn("not found at \(cache.path)"),
-            remediation: "run `quill models --download`, or make a first recording while online"
+            remediation: "run `quills models --download`, or make a first recording while online"
         )
     }
 

@@ -1,19 +1,25 @@
-# quill
+# Quills
 
-A minimal, fully local macOS meeting recorder + transcriber. One menu-bar
-click records your mic and all system audio as two separate tracks; when you
-stop, quill transcribes both on-device and writes a speaker-tagged transcript.
-Nothing ever leaves the machine.
+A local macOS meeting recorder and multilingual transcriber, built on
+[Quill](https://github.com/digimata/quill) by Andrew Jones. Quills extends the
+original project with shared multilingual Parakeet v3 models, model setup and
+diagnostics, and a local read-only MCP server for working with meeting transcripts
+from tools such as Codex, Claude Code, and OpenCode.
 
-Quill works on its own; VoiceInk and other transcription apps are optional.
+One menu-bar click records your mic and system audio as separate tracks. When you
+stop, Quills transcribes both on-device and writes a speaker-tagged transcript.
+Recording and transcription stay on your Mac. Connected MCP clients may send
+transcripts to their own services or hosted models.
+
+Quills works on its own; VoiceInk and other transcription apps are optional.
 On first transcription, it downloads its speech model if needed (an internet
 connection is required for that download). After setup, transcription runs
-offline. You can also download the model in advance with `quill models --download`.
+offline. You can also download the model in advance with `quills models --download`.
 
-Named for the feather. Sibling of [parrot](https://github.com/digimata/parrot), same skeleton: single
-Swift binary, menu-bar tray, no app bundle.
+Quills keeps the original Quill architecture: a single Swift binary, a feather
+menu-bar icon, and no app bundle.
 
-This repository is a downstream fork of [digimata/quill](https://github.com/digimata/quill),
+Quills is a downstream fork of [Quill](https://github.com/digimata/quill),
 which provides the original macOS menu-bar recorder, two-track audio capture,
 local transcription pipeline, and LaunchAgent support. The changes made in
 this fork are documented below so the upstream work and downstream
@@ -28,11 +34,11 @@ The following additions were made in this fork:
 - **Shared Parakeet v3 model support** — reuse FluidAudio's shared
   `parakeet-tdt-0.6b-v3` cache, including models already installed by VoiceInk,
   instead of maintaining a second private copy.
-- **Model download command** — added `quill models --download` to install the
+- **Model download command** — added `quills models --download` to install the
   multilingual Parakeet v3 model before an important meeting.
 - **Custom model locations** — added `transcription.model_dir` support so a
   compatible model can be selected directly or through a symlink.
-- **Improved model diagnostics** — `quill doctor` checks the selected model
+- **Improved model diagnostics** — `quills doctor` checks the selected model
   location, and the menu bar reports model-loading and transcription progress.
 - **Documentation and installation updates** — documented shared-model reuse,
   first-use setup, custom model paths, and background launch-at-login usage.
@@ -44,7 +50,7 @@ The following additions were made in this fork:
   reads. It has no recording, editing, or deletion tools and does not make
   outbound network requests.
 - **Menu-bar MCP lifecycle controls** — added MCP status plus Start, Stop, and
-  Restart actions to the feather menu. Quill stops the MCP child before a
+  Restart actions to the feather menu. Quills stops the MCP child before a
   normal application exit, and launch-at-login starts both without an open
   terminal.
 
@@ -58,28 +64,58 @@ implementation details.
 git clone https://github.com/IndianTinker/quills.git
 cd quills
 swift build -c release
-codesign --force --sign "<your codesigning identity>" .build/release/quill
-sudo install -m 755 .build/release/quill /usr/local/bin/quill
-quill models --download           # optional: prepare the model before first use
-quill install --launch-at-login   # optional: start in the menu bar on login
+codesign --force --sign "<your codesigning identity>" --identifier com.indiantinker.quills .build/release/quills
+sudo install -m 755 .build/release/quills /usr/local/bin/quills
+quills models --download           # optional: prepare the model before first use
+quills install --launch-at-login   # optional: start in the menu bar on login
 ```
 
 See [Code signing (why it matters)](#code-signing-why-it-matters) — without this
-step, Quill asks for microphone and System Audio Recording permission on every
+step, Quills asks for microphone and System Audio Recording permission on every
 recording.
 
 ### Updating an existing installation
 
-After pulling new Quill changes, stop the old LaunchAgent, replace the binary,
-and register the LaunchAgent again:
+Quills uses the `quills` command and `/usr/local/bin/quills` install path.
+For compatibility with existing Quill installations, it retains
+`~/.config/quill/config.json`, `~/Library/Application Support/Quill/status.json`,
+and existing `.quill-*` session markers. The signing identifier and LaunchAgent
+label are now `com.indiantinker.quills`. Migrating from Quill requires granting
+microphone and system-audio permissions again; subsequent updates should use
+the same signing identity and identifier to preserve those permissions.
+The MCP status JSON retains its `quill` field;
+legacy `quill://` resource links remain readable alongside `quills://` links.
+New LaunchAgent logs are `/tmp/quills.out.log` and `/tmp/quills.err.log`.
+The upstream MIT copyright and license are preserved in [LICENSE](LICENSE).
+
+The menu's **Storage** submenu saves one of three audio retention settings:
+**Delete audio after transcription**, **Keep last audio** (both tracks of the
+newest fully transcribed session), or **Do not delete anything** (the default).
+Cleanup runs when the selection changes, after transcription, and at startup. Transcripts, metadata, and logs
+are kept. Pending, failed, partially transcribed, and pre-update recordings keep
+their audio. Changing the setting applies immediately to eligible recordings; deleted audio
+cannot be restored by selecting a different option. The setting is stored as
+`audio_retention` in `~/.config/quill/config.json`, with values
+`delete_after_transcription`, `keep_last`, or `keep_all`.
+
+After pulling new Quills changes, build and sign first. Wait until recording
+and transcription finish before stopping the old LaunchAgent, installing the
+new binary, and registering the LaunchAgent again:
 
 ```sh
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.digimata.quill.plist 2>/dev/null || true
 swift build -c release
-codesign --force --sign "<your codesigning identity>" .build/release/quill
-sudo install -m 755 .build/release/quill /usr/local/bin/quill
-quill install --launch-at-login
+codesign --force --sign "<your codesigning identity>" --identifier com.indiantinker.quills .build/release/quills
+codesign --verify --strict .build/release/quills
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.indiantinker.quills.plist 2>/dev/null || true
+sudo install -m 755 .build/release/quills /usr/local/bin/quills
+quills install --launch-at-login
 ```
+
+When migrating an existing Quill installation, run
+`/usr/local/bin/quill install --uninstall` after building and signing, before
+starting Quills. This removes the old `com.digimata.quill` LaunchAgent so both
+apps do not start at login and compete for the MCP port. Keep the old binary
+until the new installation is verified.
 
 ### Code signing (why it matters)
 
@@ -100,10 +136,10 @@ security find-identity -v -p codesigning
 Any Apple Development identity works; a self-signed code-signing certificate
 created in Keychain Access works too.
 
-The last command starts Quill and its MCP server in the menu bar. The Terminal
-window can then be closed; the LaunchAgent keeps Quill running at login. The
+The last command starts Quills and its MCP server in the menu bar. The Terminal
+window can then be closed; the LaunchAgent keeps Quills running at login. The
 feather menu shows MCP status and provides Start, Stop, and Restart controls.
-Quill stops its MCP child before a normal exit. If the menu-bar parent is
+Quills stops its MCP child before a normal exit. If the menu-bar parent is
 terminated unexpectedly, the child detects that its parent disappeared and
 closes its loopback server as well.
 
@@ -113,7 +149,7 @@ transcription speed.
 
 ## How to use
 
-1. **Run it** (`quill` in a terminal, or the LaunchAgent).
+1. **Run it** (`quills` in a terminal, or the LaunchAgent).
 2. **Click the feather in the menu bar → Start recording.** First use prompts
    for microphone and System Audio Recording permissions. While recording, the
    white feather shows a red dot at its bottom-right, the menu shows a
@@ -124,9 +160,9 @@ transcription speed.
    progress; a notification fires when the transcript is ready.
 
 Press **Control–Option–Command–R (⌃⌥⌘R)** from any app to start or stop a
-recording. This provides access even if macOS hides Quill in a crowded menu
+recording. This provides access even if macOS hides Quills in a crowded menu
 bar. The feather stays one fixed icon wide; status details live in its menu
-and tooltip. If another app has claimed the shortcut, Quill logs a warning
+and tooltip. If another app has claimed the shortcut, Quills logs a warning
 and its menu control remains available. The shortcut needs no Accessibility
 permission.
 
@@ -155,20 +191,20 @@ Built in, on-device, automatic. The engine is **Parakeet TDT 0.6B v3**
 It uses FluidAudio's shared user-level cache at
 `~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3`. If
 another app such as VoiceInk has already installed a compatible v3 bundle,
-Quill reuses those files. If the model is absent,
-`quill models --download` (or the first transcription while online)
-downloads v3 into that same shared cache. Quill never keeps a second private
+Quills reuses those files. If the model is absent,
+`quills models --download` (or the first transcription while online)
+downloads v3 into that same shared cache. Quills never keeps a second private
 model copy.
 
 Before a meeting, run this once to make model setup explicit:
 
 ```sh
-quill models --download
-quill doctor
+quills models --download
+quills doctor
 ```
 
 Each track is transcribed separately, shifted by its start offset so both
-share one clock, and merged by timestamp. Before writing, Quill filters long,
+share one clock, and merged by timestamp. Before writing, Quills filters long,
 nearly identical microphone spans that overlap the same system speech, keeping
 the system version as `them`. This reduces speaker playback appearing twice.
 Replies under five words, distinct speech, and later repetitions are preserved.
@@ -177,10 +213,10 @@ The feather pulses continuously during both model loading and transcription
 (recording still takes priority with a white feather and red dot). The dropdown
 also shows the current model: Parakeet TDT 0.6B v3.
 
-Shared model files do not mean shared live inference: Quill loads its own
+Shared model files do not mean shared live inference: Quills loads its own
 Core ML model instance and releases it when the queue drains. Reusing a model
 already loaded inside VoiceInk would require VoiceInk to expose an inference
-service that Quill can call.
+service that Quills can call.
 
 Jobs run in a serial queue — you can
 start a new recording while the last one transcribes. Unfinished jobs resume
@@ -212,9 +248,9 @@ Optional, at `~/.config/quill/config.json`:
 - `transcription.enabled` — set `false` to just record.
 - `transcription.model_dir` — optional path to a **FluidAudio-compatible
   Parakeet TDT v3 Core ML bundle**. It can be a folder used by another local
-  transcription app, or a symlink to that folder. When absent, Quill uses the
-  standard FluidAudio shared cache. `quill models --download`, automatic
-  first-use downloads, and `quill doctor` all use this selected path.
+  transcription app, or a symlink to that folder. When absent, Quills uses the
+  standard FluidAudio shared cache. `quills models --download`, automatic
+  first-use downloads, and `quills doctor` all use this selected path.
 - `mic_voice_processing` — Apple's echo cancellation on the mic (default off).
   Set `true` when recording meetings through the speakers, so playback doesn't
   bleed into the mic track and get transcribed twice as "me". The trade: while
@@ -229,19 +265,19 @@ Optional, at `~/.config/quill/config.json`:
 ## CLI
 
 ```sh
-quill                        # run the menu-bar daemon (^C to quit)
-quill run --out <dir>        # custom recordings root (default ~/Recordings)
-quill doctor                 # check permissions, recordings folder, models
-quill models --download      # pre-download/reuse shared multilingual v3 model
-quill mcp --out <dir>        # run the local read-only MCP server directly
-quill install --launch-at-login
-quill install --uninstall
+quills                        # run the menu-bar daemon (^C to quit)
+quills run --out <dir>        # custom recordings root (default ~/Recordings)
+quills doctor                 # check permissions, recordings folder, models
+quills models --download      # pre-download/reuse shared multilingual v3 model
+quills mcp --out <dir>        # run the local read-only MCP server directly
+quills install --launch-at-login
+quills install --uninstall
 ```
 
 ## MCP server
 
-Quill includes a local, read-only [MCP](https://modelcontextprotocol.io/)
-server for consuming meeting data from MCP clients. When Quill is running in
+Quills includes a local, read-only [MCP](https://modelcontextprotocol.io/)
+server for consuming meeting data from MCP clients. When Quills is running in
 the menu bar, it starts the server automatically at:
 
 ```text
@@ -249,20 +285,20 @@ http://127.0.0.1:47777/mcp
 ```
 
 The server binds only to loopback, reads only from the configured recordings
-folder and Quill's local runtime-status file, and has no outbound network
+folder and Quills’ local runtime-status file, and has no outbound network
 client. It exposes status, meeting metadata, transcript search, and complete
 transcript reads. It does not expose recording, editing, deletion, or any
 other write operation. The endpoint uses independent MCP sessions, so Claude
 Code, Codex, OpenCode, and other clients can connect concurrently to the same
-running Quill instance.
+running Quills instance.
 
-The `get_status` tool and `quill://status` resource include both Quill runtime
+The `get_status` tool and `quills://status` resource include both Quills runtime
 state and MCP connection details: state, loopback host, port, full endpoint,
 transport, and read-only mode.
 
 Use the feather menu-bar icon to see whether MCP is running and to **Start**,
-**Stop**, or **Restart** it. Choosing **Quit quill** stops the MCP child
-process before Quill exits. With `quill install --launch-at-login`, the menu
+**Stop**, or **Restart** it. Choosing **Quit Quills** stops the MCP child
+process before Quills exits. With `quills install --launch-at-login`, the menu
 bar app (and its MCP server) starts without leaving a terminal open.
 
 The port can be changed in `~/.config/quill/config.json`:
@@ -294,11 +330,11 @@ For end-to-end local processing, use a local MCP client and local model.
   per-process picker if it bothers you).
 - If recordings come out silent, check System Settings → Privacy & Security →
   Screen & System Audio Recording.
-- The first v3 download is about 600 MB. Run `quill models --download` on a
+- The first v3 download is about 600 MB. Run `quills models --download` on a
   reliable connection before recording an important meeting.
 - A model from another app must be the FluidAudio Parakeet v3 Core ML bundle;
-  Whisper, GGUF, or other model formats cannot be loaded by Quill. To avoid
+  Whisper, GGUF, or other model formats cannot be loaded by Quills. To avoid
   duplication, point `transcription.model_dir` directly at it or use a
   symlink, for example: `ln -s "/path/to/model" ~/Models/parakeet-v3`.
 - The binary embeds its Info.plist (`__TEXT,__info_plist`) so TCC can
-  attribute permissions to quill itself when running as a LaunchAgent.
+  attribute permissions to quills itself when running as a LaunchAgent.

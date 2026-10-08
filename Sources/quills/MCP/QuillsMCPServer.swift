@@ -5,15 +5,15 @@ import NIOHTTP1
 import NIOPosix
 import Darwin
 
-/// Read-only MCP server for local Quill data. The HTTP multiplexer creates a
+/// Read-only MCP server for local Quills data. The HTTP multiplexer creates a
 /// separate MCP Server/transport pair for every MCP session, allowing multiple
 /// clients to connect at once without sharing request IDs or session state.
-struct QuillMCPServer {
+struct QuillsMCPServer {
     let root: URL
     let port: Int
 
     func run(parentPID: Int32? = nil) async throws {
-        let router = MCPHTTPRouter(store: QuillMCPStore(root: root), port: port)
+        let router = MCPHTTPRouter(store: QuillsMCPStore(root: root), port: port)
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 128)
@@ -26,7 +26,7 @@ struct QuillMCPServer {
 
         let channel = try await bootstrap.bind(host: "127.0.0.1", port: port).get()
         FileHandle.standardError.write(Data(
-            "quill MCP up · http://127.0.0.1:\(port)/mcp · read-only\n".utf8
+            "quills MCP up · http://127.0.0.1:\(port)/mcp · read-only\n".utf8
         ))
 
         let parentMonitor = parentPID.map { parentPID in
@@ -67,11 +67,11 @@ private actor MCPHTTPRouter {
     private static let maxSessions = 64
     private static let sessionIdleTimeout: TimeInterval = 2 * 60 * 60
 
-    private let store: QuillMCPStore
+    private let store: QuillsMCPStore
     private let port: Int
     private var sessions: [String: SessionEntry] = [:]
 
-    init(store: QuillMCPStore, port: Int) {
+    init(store: QuillsMCPStore, port: Int) {
         self.store = store
         self.port = port
     }
@@ -156,11 +156,11 @@ private actor MCPClientSession {
     private let transport: StatefulHTTPServerTransport
     private let port: Int
 
-    init(store: QuillMCPStore, port: Int) async throws {
+    init(store: QuillsMCPStore, port: Int) async throws {
         self.port = port
         transport = StatefulHTTPServerTransport()
         server = Server(
-            name: "Quill",
+            name: "Quills",
             version: "0.1.0",
             capabilities: .init(
                 resources: .init(subscribe: false, listChanged: false),
@@ -178,10 +178,10 @@ private actor MCPClientSession {
         await server.withMethodHandler(ListResources.self) { _ in
             ListResources.Result(resources: [
                 Resource(
-                    name: "quill-status",
-                    uri: "quill://status",
-                    title: "Quill status",
-                    description: "Current local Quill and MCP server status.",
+                    name: "quills-status",
+                    uri: "quills://status",
+                    title: "Quills status",
+                    description: "Current local Quills and MCP server status.",
                     mimeType: "application/json"
                 )
             ])
@@ -189,10 +189,10 @@ private actor MCPClientSession {
         await server.withMethodHandler(ListResourceTemplates.self) { _ in
             ListResourceTemplates.Result(templates: [
                 Resource.Template(
-                    uriTemplate: "quill://meetings/{meeting_id}/transcript",
+                    uriTemplate: "quills://meetings/{meeting_id}/transcript",
                     name: "meeting-transcript",
                     title: "Meeting transcript",
-                    description: "Canonical transcript for a local Quill meeting.",
+                    description: "Canonical transcript for a local Quills meeting.",
                     mimeType: "application/json"
                 )
             ])
@@ -227,15 +227,15 @@ private actor MCPClientSession {
     private static let tools: [Tool] = [
         Tool(
             name: "get_status",
-            title: "Get Quill status",
-            description: "Read local Quill recording/transcription status and this MCP server's loopback endpoint.",
+            title: "Get Quills status",
+            description: "Read local Quills recording/transcription status and this MCP server's loopback endpoint.",
             inputSchema: .object(["type": .string("object")]),
             annotations: readOnlyAnnotations
         ),
         Tool(
             name: "list_meetings",
             title: "List meetings",
-            description: "List local Quill meetings by newest first. Returns metadata only.",
+            description: "List local Quills meetings by newest first. Returns metadata only.",
             inputSchema: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -250,7 +250,7 @@ private actor MCPClientSession {
         Tool(
             name: "search_transcripts",
             title: "Search transcripts",
-            description: "Search local Quill transcript text and return timestamped snippets.",
+            description: "Search local Quills transcript text and return timestamped snippets.",
             inputSchema: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -270,7 +270,7 @@ private actor MCPClientSession {
         Tool(
             name: "get_transcript",
             title: "Get transcript",
-            description: "Read one complete local Quill transcript by meeting ID.",
+            description: "Read one complete local Quills transcript by meeting ID.",
             inputSchema: .object([
                 "type": .string("object"),
                 "properties": .object([
@@ -287,7 +287,7 @@ private actor MCPClientSession {
 
     private static func call(
         _ params: CallTool.Parameters,
-        store: QuillMCPStore,
+        store: QuillsMCPStore,
         port: Int
     ) async throws -> CallTool.Result {
         let output: String
