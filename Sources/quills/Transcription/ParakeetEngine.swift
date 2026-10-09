@@ -2,14 +2,13 @@ import AVFoundation
 import FluidAudio
 import Foundation
 
-/// Parakeet TDT 0.6B v3 (multilingual) via FluidAudio's Core ML port.
+/// Supported Parakeet models via FluidAudio's Core ML port.
 ///
 /// VoiceInk and quills share FluidAudio's user-level model cache by default.
 /// Users may point `transcription.model_dir` at another compatible model
-/// directory (including a symlink). Missing models download to that selected
-/// directory; quills never copies an existing bundle elsewhere.
+/// directory (including a symlink). Missing built-in models download to their
+/// shared cache; custom folders are loaded in place without downloads.
 actor ParakeetEngine: TranscriptionEngine {
-    static let displayName = "Parakeet TDT 0.6B v3"
     enum EngineError: Error, CustomStringConvertible {
         case notPrepared
         case unreadableAudio(URL, Error?)
@@ -25,19 +24,19 @@ actor ParakeetEngine: TranscriptionEngine {
     }
 
     nonisolated let name = "parakeet"
-    nonisolated let model = "parakeet-tdt-0.6b-v3-coreml"
+    nonisolated let model: String
+    private let selection: ModelSelection
+
+    init(selection: ModelSelection = Config.modelSelection()) {
+        self.selection = selection
+        model = selection.model.provenance
+    }
 
     private var manager: AsrManager?
 
     func prepare() async throws {
         guard manager == nil else { return }
-        let cache = Config.transcriptionModelDir()
-        let models: AsrModels
-        if AsrModels.modelsExist(at: cache, version: .v3) {
-            models = try await AsrModels.load(from: cache, version: .v3)
-        } else {
-            models = try await AsrModels.downloadAndLoad(to: cache, version: .v3)
-        }
+        let models = try await selection.load()
         let manager = AsrManager()
         try await manager.loadModels(models)
         self.manager = manager
@@ -59,7 +58,7 @@ actor ParakeetEngine: TranscriptionEngine {
             throw EngineError.unreadableAudio(audio, error)
         }
 
-        var state = try TdtDecoderState()
+        var state = try TdtDecoderState(decoderLayers: selection.model.version.decoderLayers)
         let result = try await manager.transcribe(audio, decoderState: &state)
 
         let words = buildWordTimings(from: result.tokenTimings ?? [])

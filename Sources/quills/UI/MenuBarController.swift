@@ -15,6 +15,8 @@ final class MenuBarController {
     private let mcpStopItem: NSMenuItem
     private let mcpRestartItem: NSMenuItem
     private var recordingShortcut: RecordingShortcut?
+    private let modelsMenu = ModelsMenuController()
+    private var statusMenu: NSMenu?
     private let recordingDot = RecordingDotView(frame: .zero)
     private let featherView = StatusFeatherView(frame: .zero)
     private var transcriptionText: String?
@@ -46,9 +48,7 @@ final class MenuBarController {
         transcriptionLabel.isHidden = true
         menu.addItem(transcriptionLabel)
 
-        let modelLabel = NSMenuItem(title: "Model: \(ParakeetEngine.displayName)", action: nil, keyEquivalent: "")
-        modelLabel.isEnabled = false
-        menu.addItem(modelLabel)
+        menu.addItem(modelsMenu.item)
 
         menu.addItem(.separator())
 
@@ -117,7 +117,7 @@ final class MenuBarController {
         }
         updateStorage(Config.audioRetention())
 
-        statusItem.menu = menu
+        statusMenu = menu
         recordingShortcut = RecordingShortcut { [weak self] in self?.onToggle?() }
         if recordingShortcut != nil {
             toggleItem.keyEquivalentModifierMask = [.command, .option, .control]
@@ -128,6 +128,9 @@ final class MenuBarController {
         }
 
         if let button = statusItem.button {
+            button.target = self
+            button.action = #selector(statusClicked)
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             let image = Self.featherImage()
             image?.isTemplate = false
             featherView.image = image
@@ -223,6 +226,7 @@ final class MenuBarController {
     private func refreshToolTip() {
         var lines = [isRecording ? stateLabel.title : "Quills · idle"]
         if let transcriptionText { lines.append(transcriptionText) }
+        lines.append("Option-click · start/stop recording")
         if recordingShortcut != nil { lines.append("⌃⌥⌘R · start/stop recording") }
         statusItem.button?.toolTip = lines.joined(separator: "\n")
         statusItem.button?.setAccessibilityLabel(lines.joined(separator: ". "))
@@ -273,6 +277,23 @@ final class MenuBarController {
         // Menu-bar status icons are nominally 18pt tall; size the SVG to match.
         image.size = NSSize(width: 16, height: 16)
         return image
+    }
+
+    @objc private func statusClicked() {
+        if let event = NSApp.currentEvent,
+           event.type == .leftMouseUp,
+           event.modifierFlags.contains(.option) {
+            onToggle?()
+        } else {
+            showMenu()
+        }
+    }
+
+    private func showMenu() {
+        guard let button = statusItem.button, let statusMenu else { return }
+        statusItem.menu = statusMenu
+        button.performClick(nil)
+        statusItem.menu = nil
     }
 
     @objc private func toggleClicked() { onToggle?() }

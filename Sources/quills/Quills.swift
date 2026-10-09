@@ -91,37 +91,49 @@ struct Doctor: ParsableCommand {
     }
 }
 
-/// Download the shared model before a meeting, rather than waiting for the
-/// first finished recording. By default FluidAudio uses one user-level cache,
-/// but `transcription.model_dir` can select another compatible directory.
+/// Inspect and prepare supported shared models before a meeting.
 struct Models: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "models",
-        abstract: "Manage the shared Parakeet transcription model."
+        abstract: "List or download supported local transcription models."
     )
 
-    @Flag(name: .long, help: "Download the shared multilingual Parakeet v3 model now.")
+    @Flag(name: .long, help: "Download the selected model now.")
     var download = false
 
-    func run() throws {
-        guard download else {
-            throw ValidationError("use `quills models --download`")
-        }
+    @Option(name: .long, help: "Model ID to inspect/download (uses its shared cache).")
+    var model: String?
 
-        let cache = Config.transcriptionModelDir()
-        if AsrModels.modelsExist(at: cache, version: .v3) {
-            print("✓ shared Parakeet v3 model already installed")
-            print("  \(cache.path)")
+    func run() throws {
+        let selection: ModelSelection
+        if let model {
+            guard let kind = SpeechModel(rawValue: model) else {
+                throw ValidationError("unknown model; choose " + SpeechModel.allCases.map(\.rawValue).joined(separator: ", "))
+            }
+            selection = ModelSelection(model: kind, directory: kind.cacheDirectory, isCustom: false)
+        } else {
+            selection = Config.modelSelection()
+        }
+        guard download else {
+            for kind in SpeechModel.allCases {
+                let installed = ModelSelection(model: kind, directory: kind.cacheDirectory, isCustom: false).isInstalled
+                print("\(kind.rawValue) — \(installed ? "installed" : "not downloaded")")
+                print("  \(kind.guidance)")
+                print("  \(kind.cacheDirectory.path)")
+            }
+            print("selected: \(selection.model.rawValue) at \(selection.directory.path)")
             return
         }
-
-        print("downloading shared multilingual Parakeet v3 model…")
-        switch SyncBridge.perform({ _ = try await AsrModels.download(to: cache, version: .v3) }) {
+        if selection.isCustom {
+            guard selection.isInstalled else { throw ModelError.incompleteBundle(selection.directory) }
+            print("✓ custom model files present at \(selection.directory.path)")
+            return
+        }
+        print("preparing \(selection.model.rawValue)…")
+        switch SyncBridge.perform({ try await ModelDownloads.shared.download(selection) }) {
         case .success:
-            print("✓ shared Parakeet v3 model installed")
-            print("  \(cache.path)")
-        case .failure(let error):
-            throw error
+            print("✓ model installed at \(selection.directory.path)")
+        case .failure(let error): throw error
         }
     }
 }
@@ -323,7 +335,7 @@ final class AppController {
             QuillsMCPStatus.write(recording: session != nil, transcriptionState: "idle")
         case .loadingModel(let name, let queued):
             menuBar.updateTranscription(
-                queued > 0 ? "loading shared Parakeet v3 · \(name) · \(queued) queued" : "loading shared Parakeet v3 · \(name)"
+                queued > 0 ? "loading selected model · \(name) · \(queued) queued" : "loading selected model · \(name)"
             )
             QuillsMCPStatus.write(
                 recording: session != nil,

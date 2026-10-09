@@ -82,17 +82,41 @@ enum Config {
         transcription()?["engine"] as? String ?? "parakeet"
     }
 
-    /// Directory containing a FluidAudio-compatible Parakeet TDT v3 bundle.
-    /// This may be a symlink to a model installed by another application.
-    /// The default is FluidAudio's user-level shared cache.
-    static func transcriptionModelDir() -> URL {
-        guard let dir = transcription()?["model_dir"] as? String, !dir.isEmpty else {
-            return AsrModels.defaultCacheDirectory(for: .v3)
+    static func modelSelection() -> ModelSelection {
+        modelSelection(from: load() ?? [:])
+    }
+
+    static func modelSelection(from json: [String: Any]) -> ModelSelection {
+        let settings = json["transcription"] as? [String: Any] ?? [:]
+        let model = (settings["model"] as? String).flatMap(SpeechModel.init(rawValue:)) ?? .v3
+        let custom = (settings["model_dir"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let directory = custom.map {
+            URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true)
+        } ?? model.cacheDirectory
+        return ModelSelection(model: model, directory: directory, isCustom: custom != nil)
+    }
+
+    static func transcriptionModelDir() -> URL { modelSelection().directory }
+
+    static func setModel(_ model: SpeechModel, directory: URL? = nil, at configURL: URL = path) throws {
+        var json: [String: Any] = [:]
+        if FileManager.default.fileExists(atPath: configURL.path) {
+            guard let existing = try JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any] else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            json = existing
         }
-        return URL(
-            fileURLWithPath: (dir as NSString).expandingTildeInPath,
-            isDirectory: true
-        )
+        if let value = json["transcription"], !(value is [String: Any]) {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        var settings = json["transcription"] as? [String: Any] ?? [:]
+        settings["engine"] = "parakeet"
+        settings["model"] = model.rawValue
+        settings["model_dir"] = directory?.path
+        json["transcription"] = settings
+        let data = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: configURL, options: .atomic)
     }
 
     private static func transcription() -> [String: Any]? {

@@ -6,7 +6,7 @@ original project with shared multilingual Parakeet v3 models, model setup and
 diagnostics, and a local read-only MCP server for working with meeting transcripts
 from tools such as Codex, Claude Code, and OpenCode.
 
-One menu-bar click records your mic and system audio as separate tracks. When you
+The menu-bar controls record your mic and system audio as separate tracks. When you
 stop, Quills transcribes both on-device and writes a speaker-tagged transcript.
 Recording and transcription stay on your Mac. Connected MCP clients may send
 transcripts to their own services or hosted models.
@@ -159,6 +159,9 @@ transcription speed.
    automatically. The status bar shows model loading and transcription
    progress; a notification fires when the transcript is ready.
 
+Option-click the feather to start or stop recording. A single click or
+right-click opens the menu immediately.
+
 Press **Control–Option–Command–R (⌃⌥⌘R)** from any app to start or stop a
 recording. This provides access even if macOS hides Quills in a crowded menu
 bar. The feather stays one fixed icon wide; status details live in its menu
@@ -196,6 +199,37 @@ Quills reuses those files. If the model is absent,
 downloads v3 into that same shared cache. Quills never keeps a second private
 model copy.
 
+The **Models** submenu lists supported models, their language/size guidance,
+and whether they are installed. Click an installed model to select it; click
+an absent model to download and validate it before selecting it. Downloads run
+in the background, and failed downloads leave the previous selection in place.
+Models are stored in FluidAudio's shared cache, each in its own directory.
+
+| Model | Guidance |
+|---|---|
+| Parakeet TDT 0.6B v3 (default) | Fast, multilingual; recommended starting point |
+| Parakeet TDT 0.6B v2 | Fast, English only; 600M parameters |
+| Parakeet TDT-CTC 110M | English only; smaller, faster loading, less memory |
+
+Speed and accuracy depend on hardware, language, and audio quality. These labels
+are selection guidance, not a measured accuracy ranking for meeting recordings.
+Whisper and other model families require additional engines and are not yet
+supported by Quills.
+
+Use **Browse for existing model…** to choose a model type and an existing
+FluidAudio-compatible Core ML folder. Quills checks that it loads, then saves
+the path and reuses the files in place, including folders shared with another
+app or accessed through a symlink. Choose the matching type; a folder contains
+multiple compiled `.mlmodelc` bundles and a vocabulary JSON file, rather than
+one universal model file. An incomplete custom folder reports an error and is
+never populated by automatic downloads. **Show selected model in Finder** opens
+its location.
+
+A model change takes effect at the next transcription session. A session already
+being transcribed keeps the same model for both tracks; queued sessions use the
+new selection. Transcript JSON records the model used. Files on disk are shared;
+loaded model instances in memory belong to each app separately.
+
 Before a meeting, run this once to make model setup explicit:
 
 ```sh
@@ -210,8 +244,7 @@ the system version as `them`. This reduces speaker playback appearing twice.
 Replies under five words, distinct speech, and later repetitions are preserved.
 It is conservative and may leave echoes with substantially different recognition.
 The feather pulses continuously during both model loading and transcription
-(recording still takes priority with a white feather and red dot). The dropdown
-also shows the current model: Parakeet TDT 0.6B v3.
+(recording still takes priority with a white feather and red dot). The dropdown also shows the selected model.
 
 Shared model files do not mean shared live inference: Quills loads its own
 Core ML model instance and releases it when the queue drains. Reusing a model
@@ -237,6 +270,7 @@ Optional, at `~/.config/quill/config.json`:
   "transcription": {
     "enabled": true,
     "engine": "parakeet",
+    "model": "parakeet-tdt-0.6b-v3",
     "model_dir": "~/Models/parakeet-tdt-0.6b-v3"
   },
   "on_stop": "my-hook"
@@ -246,11 +280,14 @@ Optional, at `~/.config/quill/config.json`:
 - `recordings_dir` — where sessions land. Resolution order: `--out` flag >
   config > `~/Recordings`.
 - `transcription.enabled` — set `false` to just record.
+- `transcription.model` — `parakeet-tdt-0.6b-v3` (default),
+  `parakeet-tdt-0.6b-v2`, or `parakeet-tdt-ctc-110m`. The Models menu saves this.
 - `transcription.model_dir` — optional path to a **FluidAudio-compatible
-  Parakeet TDT v3 Core ML bundle**. It can be a folder used by another local
+  Core ML bundle matching the selected model type**. It can be a folder used by another local
   transcription app, or a symlink to that folder. When absent, Quills uses the
-  standard FluidAudio shared cache. `quills models --download`, automatic
-  first-use downloads, and `quills doctor` all use this selected path.
+  standard FluidAudio shared cache. `quills models --download`
+  and `quills doctor` use this selected path. Custom paths must already contain
+  a complete model. Selecting a built-in model in the menu clears the custom path.
 - `mic_voice_processing` — Apple's echo cancellation on the mic (default off).
   Set `true` when recording meetings through the speakers, so playback doesn't
   bleed into the mic track and get transcribed twice as "me". The trade: while
@@ -268,7 +305,9 @@ Optional, at `~/.config/quill/config.json`:
 quills                        # run the menu-bar daemon (^C to quit)
 quills run --out <dir>        # custom recordings root (default ~/Recordings)
 quills doctor                 # check permissions, recordings folder, models
-quills models --download      # pre-download/reuse shared multilingual v3 model
+quills models                 # list supported models and cache locations
+quills models --download      # pre-download/reuse the selected model
+quills models --download --model parakeet-tdt-ctc-110m # download without changing selection
 quills mcp --out <dir>        # run the local read-only MCP server directly
 quills install --launch-at-login
 quills install --uninstall
@@ -332,7 +371,7 @@ For end-to-end local processing, use a local MCP client and local model.
   Screen & System Audio Recording.
 - The first v3 download is about 600 MB. Run `quills models --download` on a
   reliable connection before recording an important meeting.
-- A model from another app must be the FluidAudio Parakeet v3 Core ML bundle;
+- A model from another app must be the FluidAudio Core ML bundle for the selected Parakeet type;
   Whisper, GGUF, or other model formats cannot be loaded by Quills. To avoid
   duplication, point `transcription.model_dir` directly at it or use a
   symlink, for example: `ln -s "/path/to/model" ~/Models/parakeet-v3`.

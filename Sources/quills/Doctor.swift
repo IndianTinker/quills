@@ -77,7 +77,7 @@ enum DoctorReport {
     }
 
     /// Never discover a missing model after an important meeting: report
-    /// whether VoiceInk's shared multilingual Parakeet v3 model is available.
+    /// whether the selected model files are available.
     static func checkTranscription() -> Check {
         guard Config.transcriptionEnabled() else {
             return Check(
@@ -86,14 +86,15 @@ enum DoctorReport {
                 remediation: nil
             )
         }
-        let cache = Config.transcriptionModelDir()
-        if AsrModels.modelsExist(at: cache, version: .v3) {
+        let selection = Config.modelSelection()
+        let cache = selection.directory
+        if selection.isInstalled {
             return Check(name: "transcription", status: .ok, remediation: nil)
         }
         return Check(
-            name: "shared Parakeet v3 model",
+            name: selection.model.title,
             status: .warn("not found at \(cache.path)"),
-            remediation: "run `quills models --download`, or make a first recording while online"
+            remediation: selection.isCustom ? "choose a complete compatible model folder from Models" : "run `quills models --download`"
         )
     }
 

@@ -21,6 +21,7 @@ actor TranscriptionCoordinator {
     private var queue: [URL] = []
     private var draining = false
     private var engine: TranscriptionEngine?
+    private var engineSelection: ModelSelection?
     private var lastFailure: String?
     private var statusHandler: (@Sendable (Status) async -> Void)?
 
@@ -113,6 +114,7 @@ actor TranscriptionCoordinator {
         }
         await engine?.release()
         engine = nil
+        engineSelection = nil
         await publish(lastFailure.map { .failed(session: $0) } ?? .idle)
         draining = false
         // An enqueue that landed between the loop exiting and the release
@@ -194,16 +196,21 @@ actor TranscriptionCoordinator {
     }
 
     private func preparedEngine() async throws -> TranscriptionEngine {
-        if let engine { return engine }
+        let selection = Config.modelSelection()
+        if let engine, engineSelection == selection { return engine }
+        await engine?.release()
+        engine = nil
+        engineSelection = nil
         let configured = Config.transcriptionEngine()
         if configured != "parakeet" {
             FileHandle.standardError.write(Data(
                 "warning: unknown transcription engine \"\(configured)\" — using parakeet\n".utf8
             ))
         }
-        let engine = ParakeetEngine()
+        let engine = ParakeetEngine(selection: selection)
         try await engine.prepare()
         self.engine = engine
+        engineSelection = selection
         return engine
     }
 
