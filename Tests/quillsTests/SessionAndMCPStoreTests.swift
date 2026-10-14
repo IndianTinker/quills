@@ -25,6 +25,56 @@ final class SessionAndMCPStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: session.dir.path))
     }
 
+    func testShortRecordingRemovesAudioAndNeverBecomesPendingMeeting() throws {
+        let started = Date(timeIntervalSince1970: 1_000)
+        let session = try RecordingSession(root: root, startedAt: started)
+        for track in ["mic.caf", "system.caf"] {
+            try Data("synthetic fixture".utf8).write(to: session.dir.appendingPathComponent(track))
+        }
+
+        XCTAssertFalse(try session.stop(at: started.addingTimeInterval(9.999)))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.dir.path))
+        XCTAssertTrue(QuillsMCPStore(root: root).listMeetings().isEmpty)
+    }
+
+    func testExactlyTenSecondsPublishesMetadataAndKeepsAudio() throws {
+        let started = Date(timeIntervalSince1970: 1_000)
+        let session = try RecordingSession(root: root, startedAt: started)
+        let audio = session.dir.appendingPathComponent("mic.caf")
+        try Data("synthetic fixture".utf8).write(to: audio)
+
+        XCTAssertTrue(try session.stop(at: started.addingTimeInterval(10)))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: audio.path))
+        XCTAssertEqual(QuillsMCPStore(root: root).listMeetings().map(\.id), [session.dir.lastPathComponent])
+    }
+
+    func testPausedTimeDoesNotMakeShortRecordingEligible() throws {
+        let started = Date(timeIntervalSince1970: 1_000)
+        let session = try RecordingSession(root: root, startedAt: started)
+        session.setPaused(true, at: started.addingTimeInterval(9))
+        session.setPaused(true, at: started.addingTimeInterval(20))
+
+        XCTAssertEqual(session.recordedDuration(at: started.addingTimeInterval(100)), 9)
+        XCTAssertFalse(try session.stop(at: started.addingTimeInterval(100)))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.dir.path))
+    }
+
+    func testMultipleResumesCountOnlyUnpausedTime() throws {
+        let started = Date(timeIntervalSince1970: 1_000)
+        let session = try RecordingSession(root: root, startedAt: started)
+        session.setPaused(true, at: started.addingTimeInterval(4))
+        session.setPaused(false, at: started.addingTimeInterval(40))
+        session.setPaused(false, at: started.addingTimeInterval(41))
+        session.setPaused(true, at: started.addingTimeInterval(43))
+        session.setPaused(false, at: started.addingTimeInterval(100))
+
+        XCTAssertEqual(session.recordedDuration(at: started.addingTimeInterval(103)), 10)
+        XCTAssertTrue(try session.stop(at: started.addingTimeInterval(103)))
+        let data = try Data(contentsOf: session.dir.appendingPathComponent("meta.json"))
+        let meta = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(meta["duration_seconds"] as? Int, 103, "metadata retains the full timestamp-aligned timeline")
+    }
+
     func testMCPStoreRejectsTraversalMeetingIDs() throws {
         let store = QuillsMCPStore(root: root)
 

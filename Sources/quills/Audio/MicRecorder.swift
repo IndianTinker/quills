@@ -27,6 +27,12 @@ final class MicRecorder: @unchecked Sendable {
         }
     }
 
+    private let pause: RecordingPause
+
+    init(pause: RecordingPause = RecordingPause()) {
+        self.pause = pause
+    }
+
     private var engine = AVAudioEngine()
     private var file: AVAudioFile?
     private var url: URL?
@@ -204,7 +210,9 @@ final class MicRecorder: @unchecked Sendable {
         }
         let checkFrames = Int(format.sampleRate)
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
-            guard let self, let file = self.activeFile() else { return }
+            guard let self else { return }
+            let generation = self.pause.captureGeneration
+            guard let file = self.activeFile() else { return }
 
             if !self.livenessSettled {
                 let frames = Int(buffer.frameLength)
@@ -224,7 +232,7 @@ final class MicRecorder: @unchecked Sendable {
             }
 
             do {
-                try self.write(buffer, to: file, using: converter)
+                try self.write(buffer, to: file, using: converter, capturedGeneration: generation)
             } catch {
                 FileHandle.standardError.write(Data("mic track write failed: \(error)\n".utf8))
             }
@@ -242,9 +250,11 @@ final class MicRecorder: @unchecked Sendable {
             throw RecorderError.formatUnsupported(inputFormat)
         }
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-            guard let self, let file = self.activeFile() else { return }
+            guard let self else { return }
+            let generation = self.pause.captureGeneration
+            guard let file = self.activeFile() else { return }
             do {
-                try self.write(buffer, to: file, using: converter)
+                try self.write(buffer, to: file, using: converter, capturedGeneration: generation)
             } catch {
                 FileHandle.standardError.write(Data("mic track write failed: \(error)\n".utf8))
             }
@@ -254,21 +264,23 @@ final class MicRecorder: @unchecked Sendable {
     /// Keep the original file format across route changes, including sample
     /// rate changes (for example, a Bluetooth headset entering call mode).
     private func write(_ buffer: AVAudioPCMBuffer, to file: AVAudioFile,
-                       using converter: AVAudioConverter) throws {
+                       using converter: AVAudioConverter, capturedGeneration: UInt64) throws {
         let recoveryTime = padRecoveryGap ? firstBufferAt.map { Date().timeIntervalSince($0) } : nil
-        try Self.append(buffer, to: file, using: converter, recoveryTime: recoveryTime)
+        try Self.append(buffer, to: file, using: converter, recoveryTime: recoveryTime, pause: pause, capturedGeneration: capturedGeneration)
         padRecoveryGap = false
     }
 
     /// The file-writing path is independent of hardware so route changes and
     /// interruption timing can be verified with generated audio.
     static func append(_ buffer: AVAudioPCMBuffer, to file: AVAudioFile,
-                       using converter: AVAudioConverter, recoveryTime: TimeInterval? = nil) throws {
+                       using converter: AVAudioConverter, recoveryTime: TimeInterval? = nil,
+                       pause: RecordingPause? = nil, capturedGeneration: UInt64? = nil) throws {
         let target = file.processingFormat
         let capacity = AVAudioFrameCount(ceil(Double(buffer.frameLength)
             * target.sampleRate / buffer.format.sampleRate)) + 64
         guard let converted = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
-        let source = ConverterInput(buffer)
+        let input = try pause?.inputBuffer(buffer, capturedGeneration: capturedGeneration) ?? buffer
+        let source = ConverterInput(input)
         var error: NSError?
         let status = converter.convert(to: converted, error: &error) { _, inputStatus in
             if source.supplied {
@@ -298,7 +310,13 @@ final class MicRecorder: @unchecked Sendable {
                 }
             }
         }
-        if converted.frameLength > 0 { try file.write(from: converted) }
+        if converted.frameLength > 0 {
+            if let pause {
+                try pause.write(converted, to: file, capturedGeneration: capturedGeneration)
+            } else {
+                try file.write(from: converted)
+            }
+        }
     }
 
     private func tearDownEngine() {

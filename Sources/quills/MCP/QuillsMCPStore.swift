@@ -40,9 +40,10 @@ struct QuillsMCPStore: Sendable {
     }
 
     struct RuntimeStatus: Codable, Sendable {
-        let updated_at: String?
-        let recording: Bool
-        let recording_session: String?
+        var updated_at: String?
+        var recording: Bool
+        var recording_paused: Bool? = nil
+        var recording_session: String?
         let transcription_state: String
         let transcription_session: String?
         let transcription_track: String?

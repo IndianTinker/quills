@@ -6,10 +6,33 @@ import Foundation
 /// and two tracks give free two-party diarization.
 final class RecordingSession {
     let dir: URL
-    let startedAt = Date()
+    let startedAt: Date
+    static let minimumRecordingDuration: TimeInterval = 10
+    private var captureStartedAt: Date
+    private var pausedAt: Date?
+    private var pausedDuration: TimeInterval = 0
 
-    private let mic = MicRecorder()
-    private let system = SystemAudioRecorder()
+    private let pause = RecordingPause()
+    private let mic: MicRecorder
+    private let system: SystemAudioRecorder
+
+    var isPaused: Bool { pause.isPaused }
+
+    func setPaused(_ paused: Bool, at now: Date = Date()) {
+        guard paused != isPaused else { return }
+        pause.setPaused(paused)
+        if paused {
+            pausedAt = now
+        } else if let pausedAt {
+            pausedDuration += max(0, now.timeIntervalSince(pausedAt))
+            self.pausedAt = nil
+        }
+    }
+
+    func recordedDuration(at now: Date = Date()) -> TimeInterval {
+        let currentPause = pausedAt.map { max(0, now.timeIntervalSince($0)) } ?? 0
+        return max(0, now.timeIntervalSince(captureStartedAt) - pausedDuration - currentPause)
+    }
 
     private static let folderFormat: DateFormatter = {
         let f = DateFormatter()
@@ -20,7 +43,11 @@ final class RecordingSession {
 
     /// Create the session folder under `root` (yyyy.MM.dd-HHmm, suffixed on
     /// collision) without starting capture yet.
-    init(root: URL) throws {
+    init(root: URL, startedAt: Date = Date()) throws {
+        self.startedAt = startedAt
+        captureStartedAt = startedAt
+        mic = MicRecorder(pause: pause)
+        system = SystemAudioRecorder(pause: pause)
         let base = Self.folderFormat.string(from: startedAt)
         var candidate = root.appendingPathComponent(base, isDirectory: true)
         var n = 2
@@ -38,6 +65,7 @@ final class RecordingSession {
         try system.start(writingTo: dir.appendingPathComponent("system.caf"))
         do {
             try mic.start(writingTo: dir.appendingPathComponent("mic.caf"))
+            captureStartedAt = Date()
         } catch {
             system.stop()
             throw error
@@ -53,14 +81,22 @@ final class RecordingSession {
         try? FileManager.default.removeItem(at: dir)
     }
 
-    /// Stop both tracks and atomically publish the session metadata. A caller
+    /// Stop both tracks, discarding sessions with less than ten seconds of
+    /// unpaused capture. Returns false when discarded, otherwise atomically
+    /// publishes the session metadata. A caller
     /// can surface a finalization failure instead of silently creating a
     /// session that looks queued but has unreadable metadata.
-    func stop() throws {
+    @discardableResult
+    func stop(at ended: Date = Date()) throws -> Bool {
         mic.stop()
         system.stop()
 
-        let ended = Date()
+        guard recordedDuration(at: ended) >= Self.minimumRecordingDuration else {
+            // No metadata means it cannot enter the filesystem transcription queue.
+            // Surface deletion errors so accidentally captured audio isn't hidden.
+            try FileManager.default.removeItem(at: dir)
+            return false
+        }
         let iso = ISO8601DateFormatter()
 
         // The tracks don't start on the same buffer; record how far each
@@ -84,5 +120,6 @@ final class RecordingSession {
             options: [.prettyPrinted, .sortedKeys]
         )
         try data.write(to: dir.appendingPathComponent("meta.json"), options: .atomic)
+        return true
     }
 }

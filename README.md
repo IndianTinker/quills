@@ -54,6 +54,16 @@ The following additions were made in this fork:
   normal application exit, and launch-at-login starts both without an open
   terminal.
 
+### 2026-10-14 — recording controls and agent setup
+
+- **Pause and resume** — pause both tracks from the menu or with
+  Control–Option–Command–P. Paused sections become silence to preserve transcript
+  timing, and the feather dot turns orange until recording resumes.
+- **Accidental recording cutoff** — discard sessions with less than 10 seconds
+  of unpaused capture before transcription or the completion hook runs.
+- **Copy MCP details** — copy the current endpoint, port, connection instructions,
+  tools, resources, and suggested queries directly from the menu into an AI agent.
+
 These changes are maintained here as downstream contributions on top of the
 upstream project. See the repository history for the individual commits and
 implementation details.
@@ -93,7 +103,9 @@ The menu's **Storage** submenu saves one of three audio retention settings:
 newest fully transcribed session), or **Do not delete anything** (the default).
 Cleanup runs when the selection changes, after transcription, and at startup. Transcripts, metadata, and logs
 are kept. Pending, failed, partially transcribed, and pre-update recordings keep
-their audio. Changing the setting applies immediately to eligible recordings; deleted audio
+their audio, even when transcripts exist: an older session without the completion
+marker is never made eligible just because it has a transcript. Changing the
+setting applies immediately to eligible recordings; deleted audio
 cannot be restored by selecting a different option. The setting is stored as
 `audio_retention` in `~/.config/quill/config.json`, with values
 `delete_after_transcription`, `keep_last`, or `keep_all`.
@@ -155,9 +167,21 @@ transcription speed.
    white feather shows a red dot at its bottom-right, the menu shows a
    running elapsed counter, and macOS shows the purple
    recording indicator.
-3. **Click → Stop recording** when the meeting ends. Transcription starts
+3. **Pause private sections** with **Pause recording** in the menu or
+   **Control–Option–Command–P (⌃⌥⌘P)** from any app. Use the same control to
+   resume in the same session. The feather dot turns orange and the menu shows
+   **paused**. Both tracks save silence during pauses, so private speech is
+   excluded while elapsed time and transcript timestamps stay aligned. Audio
+   devices remain connected, so macOS's recording indicator stays on. Pause
+   has no effect when no session is open; you can also stop a paused session.
+4. **Click → Stop recording** when the meeting ends. Transcription starts
    automatically. The status bar shows model loading and transcription
    progress; a notification fires when the transcript is ready.
+
+Sessions with **less than 10 seconds of unpaused recording** are discarded
+when stopped: their audio folder is removed, no model is loaded or transcription
+queued for them, and `on_stop` does not run. Exactly 10 seconds is kept. Paused
+time does not count toward this minimum. Existing recordings are unaffected.
 
 Option-click the feather to start or stop recording. A single click or
 right-click opens the menu immediately.
@@ -339,6 +363,13 @@ Use the feather menu-bar icon to see whether MCP is running and to **Start**,
 **Stop**, or **Restart** it. Choosing **Quit Quills** stops the MCP child
 process before Quills exits. With `quills install --launch-at-login`, the menu
 bar app (and its MCP server) starts without leaving a terminal open.
+
+Choose **Copy MCP details** in the feather menu to copy a guide you can paste
+into your AI agent. It includes the current endpoint and port, server state,
+transport, connection steps, tools with example arguments, resources, and a
+quick workflow for finding transcripts. It works even when MCP is stopped,
+so you can copy its configuration before starting it. The MCP client must run
+on the same Mac to reach the loopback endpoint.
 
 The port can be changed in `~/.config/quill/config.json`:
 

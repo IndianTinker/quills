@@ -29,6 +29,12 @@ final class SystemAudioRecorder {
         }
     }
 
+    private let pause: RecordingPause
+
+    init(pause: RecordingPause = RecordingPause()) {
+        self.pause = pause
+    }
+
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
     private var procID: AudioDeviceIOProcID?
@@ -141,14 +147,16 @@ final class SystemAudioRecorder {
     private func installIOProc(format: AVAudioFormat) throws {
         var status = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, queue) {
             [weak self] _, inInputData, _, _, _ in
-            guard let self, let file = self.activeFile() else { return }
+            guard let self else { return }
+            let generation = self.pause.captureGeneration
+            guard let file = self.activeFile() else { return }
             guard let buffer = AVAudioPCMBuffer(
                 pcmFormat: format,
                 bufferListNoCopy: inInputData,
                 deallocator: nil
             ) else { return }
             do {
-                try file.write(from: buffer)
+                try self.pause.write(buffer, to: file, capturedGeneration: generation)
             } catch {
                 FileHandle.standardError.write(Data("system track write failed: \(error)\n".utf8))
             }

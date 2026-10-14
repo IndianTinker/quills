@@ -196,10 +196,20 @@ final class AppController {
         self.root = root
         mcpServer = MCPServerProcess(root: root, port: Config.mcpPort())
         menuBar.onToggle = { [weak self] in self?.toggle() }
+        menuBar.onPause = { [weak self] in self?.togglePause() }
         menuBar.onOpenFolder = { [weak self] in self?.openFolder() }
         menuBar.onMCPStart = { [weak self] in self?.mcpServer.start() }
         menuBar.onMCPStop = { [weak self] in self?.mcpServer.stop() }
         menuBar.onMCPRestart = { [weak self] in self?.mcpServer.restart() }
+        menuBar.onCopyMCPDetails = { [weak self] in
+            guard let self else { return }
+            let details = MCPConnectionDetails.text(port: self.mcpServer.port, root: self.root,
+                                                    state: self.mcpServer.state)
+            NSPasteboard.general.clearContents()
+            if !NSPasteboard.general.setString(details, forType: .string) {
+                notifyUser(title: "Quills — couldn't copy MCP details", body: "Try copying again from the menu.")
+            }
+        }
         menuBar.onQuit = { [weak self] in self?.shutdown() }
         menuBar.onStorageChange = { [weak self] retention in
             do {
@@ -254,6 +264,16 @@ final class AppController {
         }
     }
 
+    private func togglePause() {
+        guard let session else { return }
+        session.setPaused(!session.isPaused)
+        tick()
+        FileHandle.standardError.write(Data("\(session.isPaused ? "Ⅱ paused" : "● resumed") · \(session.dir.path)\n".utf8))
+        // Preserve the independent transcription status when publishing pause.
+        QuillsMCPStatus.updateRecording(recording: true, paused: session.isPaused,
+                                        session: session.dir.lastPathComponent)
+    }
+
     private func startSession() {
         var newSession: RecordingSession?
         do {
@@ -261,10 +281,9 @@ final class AppController {
             guard let newSession else { return }
             try newSession.start()
             session = newSession
-            QuillsMCPStatus.write(
+            QuillsMCPStatus.updateRecording(
                 recording: true,
-                recordingSession: newSession.dir.lastPathComponent,
-                transcriptionState: "idle"
+                session: newSession.dir.lastPathComponent
             )
             FileHandle.standardError.write(Data("● recording → \(newSession.dir.path)\n".utf8))
         } catch {
@@ -285,8 +304,9 @@ final class AppController {
     private func stopSession() {
         guard let session else { return }
         let finalizationError: Error?
+        var kept = true
         do {
-            try session.stop()
+            kept = try session.stop()
             finalizationError = nil
         } catch {
             finalizationError = error
@@ -303,6 +323,12 @@ final class AppController {
         menuBar.update(recording: false, elapsed: nil)
 
         let dir = session.dir
+        if !kept {
+            FileHandle.standardError.write(Data("discarded recording under 10 seconds · \(dir.path)\n".utf8))
+            // A previous meeting may still be transcribing; preserve its status.
+            QuillsMCPStatus.updateRecording(recording: false)
+            return
+        }
         if let finalizationError {
             QuillsMCPStatus.write(
                 recording: false,
@@ -332,13 +358,20 @@ final class AppController {
         switch status {
         case .idle:
             menuBar.updateTranscription(nil)
-            QuillsMCPStatus.write(recording: session != nil, transcriptionState: "idle")
+            QuillsMCPStatus.write(
+                recording: session != nil,
+                recordingPaused: session?.isPaused ?? false,
+                recordingSession: session?.dir.lastPathComponent,
+                transcriptionState: "idle"
+            )
         case .loadingModel(let name, let queued):
             menuBar.updateTranscription(
                 queued > 0 ? "loading selected model · \(name) · \(queued) queued" : "loading selected model · \(name)"
             )
             QuillsMCPStatus.write(
                 recording: session != nil,
+                recordingPaused: session?.isPaused ?? false,
+                recordingSession: session?.dir.lastPathComponent,
                 transcriptionState: "loading_model",
                 transcriptionSession: name,
                 queued: queued
@@ -349,6 +382,8 @@ final class AppController {
             )
             QuillsMCPStatus.write(
                 recording: session != nil,
+                recordingPaused: session?.isPaused ?? false,
+                recordingSession: session?.dir.lastPathComponent,
                 transcriptionState: "transcribing",
                 transcriptionSession: name,
                 transcriptionTrack: track,
@@ -358,6 +393,8 @@ final class AppController {
             menuBar.updateTranscription("transcription failed · \(name)")
             QuillsMCPStatus.write(
                 recording: session != nil,
+                recordingPaused: session?.isPaused ?? false,
+                recordingSession: session?.dir.lastPathComponent,
                 transcriptionState: "failed",
                 transcriptionSession: name,
                 error: "transcription failed"
@@ -369,7 +406,8 @@ final class AppController {
         guard let session else { return }
         menuBar.update(
             recording: true,
-            elapsed: Self.format(Date().timeIntervalSince(session.startedAt))
+            elapsed: Self.format(Date().timeIntervalSince(session.startedAt)),
+            paused: session.isPaused
         )
     }
 

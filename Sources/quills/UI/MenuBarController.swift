@@ -1,5 +1,6 @@
 import AppKit
 import QuartzCore
+import Carbon
 
 /// Status bar item in the top-right of the menu bar. Shows recording state at
 /// a glance and provides the only persistent control surface for the daemon
@@ -11,10 +12,12 @@ final class MenuBarController {
     private let transcriptionLabel: NSMenuItem
     private let mcpStateLabel: NSMenuItem
     private let toggleItem: NSMenuItem
+    private let pauseItem: NSMenuItem
     private let mcpStartItem: NSMenuItem
     private let mcpStopItem: NSMenuItem
     private let mcpRestartItem: NSMenuItem
     private var recordingShortcut: RecordingShortcut?
+    private var pauseShortcut: RecordingShortcut?
     private let modelsMenu = ModelsMenuController()
     private var statusMenu: NSMenu?
     private let recordingDot = RecordingDotView(frame: .zero)
@@ -23,10 +26,12 @@ final class MenuBarController {
     private var storageItems: [NSMenuItem] = []
 
     var onToggle: (() -> Void)?
+    var onPause: (() -> Void)?
     var onOpenFolder: (() -> Void)?
     var onMCPStart: (() -> Void)?
     var onMCPStop: (() -> Void)?
     var onMCPRestart: (() -> Void)?
+    var onCopyMCPDetails: (() -> Void)?
     var onQuit: (() -> Void)?
     var onStorageChange: ((AudioRetention) -> Void)?
 
@@ -58,6 +63,10 @@ final class MenuBarController {
             keyEquivalent: "r"
         )
         menu.addItem(toggleItem)
+
+        pauseItem = NSMenuItem(title: "Pause recording", action: #selector(pauseClicked), keyEquivalent: "p")
+        pauseItem.isEnabled = false
+        menu.addItem(pauseItem)
 
         let openFolder = NSMenuItem(
             title: "Open recordings folder",
@@ -102,6 +111,8 @@ final class MenuBarController {
         menu.addItem(mcpStartItem)
         menu.addItem(mcpStopItem)
         menu.addItem(mcpRestartItem)
+        let copyMCPDetails = NSMenuItem(title: "Copy MCP details", action: #selector(copyMCPDetailsClicked), keyEquivalent: "")
+        menu.addItem(copyMCPDetails)
 
         menu.addItem(.separator())
 
@@ -112,7 +123,7 @@ final class MenuBarController {
         )
         menu.addItem(quit)
 
-        for item in [toggleItem, openFolder, mcpStartItem, mcpStopItem, mcpRestartItem, quit] + storageItems {
+        for item in [toggleItem, pauseItem, openFolder, mcpStartItem, mcpStopItem, mcpRestartItem, copyMCPDetails, quit] + storageItems {
             item.target = self
         }
         updateStorage(Config.audioRetention())
@@ -125,6 +136,15 @@ final class MenuBarController {
             toggleItem.keyEquivalent = ""
             toggleItem.toolTip = "The global recording shortcut could not be registered."
             FileHandle.standardError.write(Data("warning: recording shortcut ⌃⌥⌘R unavailable (possibly already in use)\n".utf8))
+        }
+
+        pauseShortcut = RecordingShortcut(keyCode: UInt32(kVK_ANSI_P), id: 2) { [weak self] in self?.onPause?() }
+        if pauseShortcut != nil {
+            pauseItem.keyEquivalentModifierMask = [.command, .option, .control]
+        } else {
+            pauseItem.keyEquivalent = ""
+            pauseItem.toolTip = "The global pause shortcut could not be registered."
+            FileHandle.standardError.write(Data("warning: pause shortcut ⌃⌥⌘P unavailable (possibly already in use)\n".utf8))
         }
 
         if let button = statusItem.button {
@@ -159,11 +179,14 @@ final class MenuBarController {
     /// menu bar shows a white feather with a red dot while recording, pulsing while a
     /// model loads or a transcript is produced); the elapsed counter lives in the menu's
     /// state label. Call once a second while recording.
-    func update(recording: Bool, elapsed: String?) {
+    func update(recording: Bool, elapsed: String?, paused: Bool = false) {
         isRecording = recording
         recordingDot.isHidden = !recording
-        stateLabel.title = recording ? "● recording · \(elapsed ?? "0:00")" : "idle"
+        recordingDot.paused = paused
+        stateLabel.title = recording ? "\(paused ? "Ⅱ paused" : "● recording") · \(elapsed ?? "0:00")" : "idle"
         toggleItem.title = recording ? "Stop recording" : "Start recording"
+        pauseItem.isEnabled = recording
+        pauseItem.title = paused ? "Resume recording" : "Pause recording"
         refreshToolTip()
         refreshIconTint()
     }
@@ -210,6 +233,7 @@ final class MenuBarController {
 
     func stop() {
         recordingShortcut?.stop()
+        pauseShortcut?.stop()
         setPulsing(false)
     }
 
@@ -228,6 +252,7 @@ final class MenuBarController {
         if let transcriptionText { lines.append(transcriptionText) }
         lines.append("Option-click · start/stop recording")
         if recordingShortcut != nil { lines.append("⌃⌥⌘R · start/stop recording") }
+        if pauseShortcut != nil { lines.append("⌃⌥⌘P · pause/resume recording") }
         statusItem.button?.toolTip = lines.joined(separator: "\n")
         statusItem.button?.setAccessibilityLabel(lines.joined(separator: ". "))
     }
@@ -296,10 +321,12 @@ final class MenuBarController {
         statusItem.menu = nil
     }
 
+    @objc private func pauseClicked() { onPause?() }
     @objc private func toggleClicked() { onToggle?() }
     @objc private func openFolderClicked() { onOpenFolder?() }
     @objc private func mcpStartClicked() { onMCPStart?() }
     @objc private func mcpStopClicked() { onMCPStop?() }
+    @objc private func copyMCPDetailsClicked() { onCopyMCPDetails?() }
     @objc private func mcpRestartClicked() { onMCPRestart?() }
     @objc private func quitClicked() { onQuit?() }
 }
@@ -312,10 +339,11 @@ private final class StatusFeatherView: NSImageView {
 
 @MainActor
 private final class RecordingDotView: NSView {
+    var paused = false { didSet { needsDisplay = true } }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.systemRed.setFill()
+        (paused ? NSColor.systemOrange : NSColor.systemRed).setFill()
         NSBezierPath(ovalIn: bounds).fill()
     }
 }
